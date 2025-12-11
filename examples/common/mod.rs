@@ -1,3 +1,5 @@
+use pollster::FutureExt;
+use std::sync::Arc;
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
@@ -6,14 +8,14 @@ use winit::{
 };
 
 pub trait Example {
-    fn init(window: &Window) -> Self;
+    async fn init(window: Arc<Window>) -> Self;
     fn resize(&mut self, width: u32, height: u32);
     fn update(&mut self);
     fn render(&mut self);
 }
 
 struct App<E: Example> {
-    window: Option<Window>,
+    window: Option<Arc<Window>>,
     example: Option<E>,
 }
 
@@ -28,10 +30,12 @@ impl<E: Example> Default for App<E> {
 
 impl<E: Example> ApplicationHandler for App<E> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        let window = event_loop
-            .create_window(Window::default_attributes())
-            .unwrap();
-        let example = E::init(&window);
+        let window = Arc::new(
+            event_loop
+                .create_window(Window::default_attributes())
+                .unwrap(),
+        );
+        let example = E::init(window.clone()).block_on();
         self.window = Some(window);
         self.example = Some(example);
     }

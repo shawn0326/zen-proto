@@ -9,3 +9,4 @@ glam = "0.30"
 
 [dev-dependencies]
 winit = "0.30"
+pollster = "0.4"
