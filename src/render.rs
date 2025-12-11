@@ -1,8 +1,12 @@
+mod cull;
+use cull::*;
+
 pub struct Renderer {
     surface: wgpu::Surface<'static>,
     surface_configuration: wgpu::SurfaceConfiguration,
     device: wgpu::Device,
     queue: wgpu::Queue,
+    cull_resources: CullResources,
 }
 
 impl Renderer {
@@ -37,11 +41,14 @@ impl Renderer {
 
         surface.configure(&device, &surface_configuration);
 
+        let cull_resources = create_cull_resources(&device);
+
         Renderer {
             surface,
             surface_configuration,
             device,
             queue,
+            cull_resources,
         }
     }
 
@@ -70,6 +77,23 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder"),
             });
+
+        {
+            let CullResources {
+                cull_pipeline,
+                cull_bind_group,
+                instance_count,
+            } = &self.cull_resources;
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Frustum Culling Pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(cull_pipeline);
+            pass.set_bind_group(0, cull_bind_group, &[]);
+            let wg_size = 64;
+            let group_count = (*instance_count + wg_size - 1) / wg_size;
+            pass.dispatch_workgroups(group_count, 1, 1);
+        }
 
         {
             let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

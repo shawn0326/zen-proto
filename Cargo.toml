@@ -5,7 +5,8 @@ edition = "2024"
 
 [dependencies]
 wgpu = "27"
-glam = "0.30"
+glam = { version = "0.30", features = ["bytemuck"] }
+bytemuck = { version = "1.24", features = ["derive"] }
 
 [dev-dependencies]
 winit = "0.30"
