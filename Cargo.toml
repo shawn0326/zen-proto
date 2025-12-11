@@ -6,3 +6,6 @@ edition = "2024"
 [dependencies]
 wgpu = "27"
 glam = "0.30"
+
+[dev-dependencies]
+winit = "0.30"
