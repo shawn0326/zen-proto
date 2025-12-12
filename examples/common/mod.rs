@@ -1,3 +1,9 @@
+#[allow(dead_code)]
+pub mod frame_rate_tracker;
+#[allow(dead_code)]
+pub mod orbit_camera_controller;
+
+use frame_rate_tracker::FrameRateTracker;
 use pollster::FutureExt;
 use std::sync::Arc;
 use winit::{
@@ -6,8 +12,6 @@ use winit::{
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     window::{Window, WindowId},
 };
-
-mod fps_counter;
 
 pub trait Example {
     async fn init(window: Arc<Window>) -> Self;
@@ -19,7 +23,7 @@ pub trait Example {
 struct App<E: Example> {
     window: Option<Arc<Window>>,
     example: Option<E>,
-    fps_counter: fps_counter::FpsCounter,
+    fps_tracker: FrameRateTracker,
 }
 
 impl<E: Example> Default for App<E> {
@@ -27,7 +31,7 @@ impl<E: Example> Default for App<E> {
         Self {
             window: None,
             example: None,
-            fps_counter: fps_counter::FpsCounter::default(),
+            fps_tracker: FrameRateTracker::default(),
         }
     }
 }
@@ -56,7 +60,7 @@ impl<E: Example> ApplicationHandler for App<E> {
             }
             WindowEvent::RedrawRequested => {
                 if let Some(example) = &mut self.example {
-                    let fps = self.fps_counter.tick();
+                    let fps = self.fps_tracker.record_frame();
                     self.window
                         .as_ref()
                         .unwrap()
