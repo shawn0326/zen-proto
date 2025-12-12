@@ -29,6 +29,14 @@ impl Example for Demo {
     fn render(&mut self) {
         self.renderer.render();
     }
+
+    fn mouse_drag(&mut self, dx: f32, dy: f32) {
+        println!("mouse_drag: dx={}, dy={}", dx, dy);
+    }
+
+    fn mouse_wheel(&mut self, delta_y: f32) {
+        println!("mouse_wheel: delta_y={}", delta_y);
+    }
 }
 
 fn main() {

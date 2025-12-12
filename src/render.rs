@@ -43,7 +43,7 @@ impl Renderer {
             format: surface.get_capabilities(&adapter).formats[0],
             width: 800,
             height: 600,
-            present_mode: wgpu::PresentMode::Fifo,
+            present_mode: wgpu::PresentMode::Mailbox,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
