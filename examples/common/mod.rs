@@ -7,6 +7,8 @@ use winit::{
     window::{Window, WindowId},
 };
 
+mod fps_counter;
+
 pub trait Example {
     async fn init(window: Arc<Window>) -> Self;
     fn resize(&mut self, width: u32, height: u32);
@@ -17,6 +19,7 @@ pub trait Example {
 struct App<E: Example> {
     window: Option<Arc<Window>>,
     example: Option<E>,
+    fps_counter: fps_counter::FpsCounter,
 }
 
 impl<E: Example> Default for App<E> {
@@ -24,6 +27,7 @@ impl<E: Example> Default for App<E> {
         Self {
             window: None,
             example: None,
+            fps_counter: fps_counter::FpsCounter::default(),
         }
     }
 }
@@ -52,6 +56,12 @@ impl<E: Example> ApplicationHandler for App<E> {
             }
             WindowEvent::RedrawRequested => {
                 if let Some(example) = &mut self.example {
+                    let fps = self.fps_counter.tick();
+                    self.window
+                        .as_ref()
+                        .unwrap()
+                        .set_title(&format!("Basic Scene Example - FPS: {:.1}", fps));
+
                     example.update();
                     example.render();
                 }

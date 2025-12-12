@@ -1,5 +1,8 @@
 mod cull;
+mod draw;
+
 use cull::*;
+use draw::*;
 
 pub struct Renderer {
     surface: wgpu::Surface<'static>,
@@ -7,6 +10,7 @@ pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     cull_resources: CullResources,
+    draw_resources: DrawResources,
 }
 
 impl Renderer {
@@ -23,8 +27,14 @@ impl Renderer {
         println!("{:?}", adapter.get_info());
         println!("{:?}", adapter.features());
 
+        let required_features =
+            wgpu::Features::MULTI_DRAW_INDIRECT_COUNT | wgpu::Features::INDIRECT_FIRST_INSTANCE;
+
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default())
+            .request_device(&wgpu::DeviceDescriptor {
+                required_features: required_features,
+                ..Default::default()
+            })
             .await
             .unwrap();
 
@@ -42,6 +52,8 @@ impl Renderer {
         surface.configure(&device, &surface_configuration);
 
         let cull_resources = create_cull_resources(&device);
+        let draw_resources =
+            create_draw_resources(&device, surface_configuration.format, &cull_resources);
 
         Renderer {
             surface,
@@ -49,6 +61,7 @@ impl Renderer {
             device,
             queue,
             cull_resources,
+            draw_resources,
         }
     }
 
@@ -79,24 +92,20 @@ impl Renderer {
             });
 
         {
-            let CullResources {
-                cull_pipeline,
-                cull_bind_group,
-                instance_count,
-            } = &self.cull_resources;
+            let wg_size = 64;
+            let group_count = (self.cull_resources.instance_count + wg_size - 1) / wg_size;
+
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Frustum Culling Pass"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(cull_pipeline);
-            pass.set_bind_group(0, cull_bind_group, &[]);
-            let wg_size = 64;
-            let group_count = (*instance_count + wg_size - 1) / wg_size;
+            pass.set_pipeline(&self.cull_resources.cull_pipeline);
+            pass.set_bind_group(0, &self.cull_resources.cull_bind_group, &[]);
             pass.dispatch_workgroups(group_count, 1, 1);
         }
 
         {
-            let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &surface_texture
@@ -117,6 +126,21 @@ impl Renderer {
                 depth_stencil_attachment: None,
                 ..Default::default()
             });
+
+            render_pass.set_pipeline(&self.draw_resources.pipeline);
+            render_pass.set_bind_group(0, &self.draw_resources.bind_group, &[]);
+            render_pass.set_index_buffer(
+                self.draw_resources.index_buffer.slice(..),
+                self.draw_resources.index_format,
+            );
+
+            render_pass.multi_draw_indexed_indirect_count(
+                &self.cull_resources.indirect_args_buffer,
+                0,
+                &self.cull_resources.indirect_count_buffer,
+                0,
+                self.cull_resources.instance_count,
+            );
 
             drop(render_pass);
         }
