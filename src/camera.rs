@@ -146,4 +146,26 @@ impl Camera {
     pub fn view_projection(&self) -> Mat4 {
         self.projection * self.view()
     }
+
+    pub fn frustum(&self) -> [glam::Vec4; 6] {
+        let view_proj = self.view_projection();
+        let m = view_proj.to_cols_array();
+
+        let row = |i| glam::Vec4::new(m[i], m[i + 4], m[i + 8], m[i + 12]);
+
+        let m0 = row(0);
+        let m1 = row(1);
+        let m2 = row(2);
+        let m3 = row(3);
+
+        let mut planes = [glam::Vec4::ZERO; 6];
+        planes[0] = (m3 + m0).normalize(); // left
+        planes[1] = (m3 - m0).normalize(); // right
+        planes[2] = (m3 + m1).normalize(); // bottom
+        planes[3] = (m3 - m1).normalize(); // top
+        planes[4] = (m3 + m2).normalize(); // near
+        planes[5] = (m3 - m2).normalize(); // far
+
+        planes
+    }
 }

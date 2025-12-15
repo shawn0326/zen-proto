@@ -1,3 +1,4 @@
+use crate::camera::Camera;
 use crate::primitive::Primitive;
 use crate::render::PrimitivesContext;
 
@@ -18,8 +19,12 @@ pub struct DrawResources {
 }
 
 impl DrawResources {
-    pub fn update_camera_buffer(&self, queue: &wgpu::Queue, view_proj: &glam::Mat4) {
-        queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(view_proj));
+    pub fn update_camera_buffer(&self, queue: &wgpu::Queue, camera: &Camera) {
+        queue.write_buffer(
+            &self.camera_buffer,
+            0,
+            bytemuck::bytes_of(&camera.view_projection()),
+        );
     }
 }
 

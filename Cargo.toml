@@ -11,3 +11,5 @@ bytemuck = { version = "1.24", features = ["derive"] }
 [dev-dependencies]
 winit = "0.30"
 pollster = "0.4"
+glam = { version = "0.30", features = ["rand"] }
+rand = "0.9"

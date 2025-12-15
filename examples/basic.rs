@@ -4,6 +4,7 @@ use common::{
     orbit_camera_controller::{OrbitCameraController, OrbitCameraControllerOptions},
     run,
 };
+use rand::Rng;
 use std::sync::Arc;
 use winit::window::Window;
 use zen_proto::{
@@ -52,13 +53,9 @@ impl Example for Demo {
         });
         let primitive_count = 100_0000u32;
         let mut primitives = Vec::with_capacity(primitive_count as usize);
-        let grid = (primitive_count as f32).cbrt().ceil() as u32; // 100
-        let spacing = 3.0;
-        for i in 0..primitive_count {
-            let x = (i % grid) as f32 - (grid as f32 - 1.0) * 0.5;
-            let y = ((i / grid) % grid) as f32 - (grid as f32 - 1.0) * 0.5;
-            let z = (i / (grid * grid)) as f32 - (grid as f32 - 1.0) * 0.5;
-            let translation = glam::vec3(x * spacing, y * spacing, z * spacing);
+        let mut rng = rand::rng();
+        for _ in 0..primitive_count {
+            let translation = rng.random::<glam::Vec3>() * 100. - glam::vec3(50.0, 50.0, 50.0);
             let transform = glam::Mat4::from_translation(translation);
             let sphere = glam::Vec4::new(0.0, 0.0, 0.0, 1.0); // 半径为 1 的单位球体
             primitives.push(Primitive { transform, sphere });
@@ -91,7 +88,7 @@ impl Example for Demo {
     }
 
     fn mouse_wheel(&mut self, delta_y: f32) {
-        self.camera_controller.dolly(delta_y * 0.1);
+        self.camera_controller.dolly(delta_y);
         self.cull_camera
             .set_view(self.camera_controller.view_matrix());
     }

@@ -1,4 +1,4 @@
-use crate::render::PrimitivesContext;
+use crate::{camera::Camera, render::PrimitivesContext};
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -26,33 +26,6 @@ pub struct DrawIndexedIndirectArgs {
     pub first_instance: u32,
 }
 
-fn extract_frustum_from_matrix(view_proj: glam::Mat4) -> FrustumUniform {
-    let m = view_proj.to_cols_array();
-    // m: [f32; 16], 按列主序存储
-    // 但我们要按行主序访问
-    // 行0: m[0] m[4] m[8]  m[12]
-    // 行1: m[1] m[5] m[9]  m[13]
-    // 行2: m[2] m[6] m[10] m[14]
-    // 行3: m[3] m[7] m[11] m[15]
-
-    let row = |i| glam::Vec4::new(m[i], m[i + 4], m[i + 8], m[i + 12]);
-
-    let m0 = row(0);
-    let m1 = row(1);
-    let m2 = row(2);
-    let m3 = row(3);
-
-    let mut planes = [glam::Vec4::ZERO; 6];
-    planes[0] = (m3 + m0).normalize(); // left
-    planes[1] = (m3 - m0).normalize(); // right
-    planes[2] = (m3 + m1).normalize(); // bottom
-    planes[3] = (m3 - m1).normalize(); // top
-    planes[4] = (m3 + m2).normalize(); // near
-    planes[5] = (m3 - m2).normalize(); // far
-
-    FrustumUniform { planes }
-}
-
 pub struct CullResources {
     pub cull_pipeline: wgpu::ComputePipeline,
     pub cull_bind_group: wgpu::BindGroup,
@@ -62,12 +35,11 @@ pub struct CullResources {
 }
 
 impl CullResources {
-    pub fn update_frustum(&self, queue: &wgpu::Queue, view_proj: glam::Mat4) {
-        let frustum_uniform = extract_frustum_from_matrix(view_proj);
+    pub fn update_frustum(&self, queue: &wgpu::Queue, camera: &Camera) {
         queue.write_buffer(
             &self.frustum_buffer,
             0,
-            bytemuck::bytes_of(&frustum_uniform),
+            bytemuck::bytes_of(&camera.frustum()),
         );
     }
 
@@ -89,28 +61,6 @@ pub fn create_cull_resources(
     primitives: &PrimitivesContext,
 ) -> CullResources {
     use wgpu::util::DeviceExt;
-
-    // let instance_count = 100_0000u32;
-
-    // 创建 Instance Buffer
-    // let mut instances = Vec::new();
-    // let grid = (instance_count as f32).cbrt().ceil() as u32; // 100
-    // let spacing = 3.0;
-    // for i in 0..instance_count {
-    //     let x = (i % grid) as f32 - (grid as f32 - 1.0) * 0.5;
-    //     let y = ((i / grid) % grid) as f32 - (grid as f32 - 1.0) * 0.5;
-    //     let z = (i / (grid * grid)) as f32 - (grid as f32 - 1.0) * 0.5;
-    //     let translation = glam::vec3(x * spacing, y * spacing, z * spacing);
-    //     let model = glam::Mat4::from_translation(translation);
-    //     let sphere = glam::Vec4::new(0.0, 0.0, 0.0, 1.0); // 半径为 1 的单位球体
-    //     let instance = InstanceData { model, sphere };
-    //     instances.push(instance);
-    // }
-    // let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-    //     label: Some("Instance Buffer"),
-    //     contents: bytemuck::cast_slice(&instances),
-    //     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-    // });
 
     // 新增：Indirect Args Buffer（最多 instance_count 条）
     let indirect_args_buffer = device.create_buffer(&wgpu::BufferDescriptor {

@@ -133,7 +133,7 @@ impl Renderer {
         {
             render_context
                 .cull_resources
-                .update_frustum(&self.queue, cull_camera.view_projection());
+                .update_frustum(&self.queue, &cull_camera);
             render_context
                 .cull_resources
                 .reset_indirect_buffers(&self.queue);
@@ -175,7 +175,7 @@ impl Renderer {
 
             render_context
                 .draw_resources
-                .update_camera_buffer(&self.queue, &draw_camera.view_projection());
+                .update_camera_buffer(&self.queue, &draw_camera);
 
             render_pass.set_pipeline(&render_context.draw_resources.pipeline);
             render_pass.set_bind_group(0, &render_context.draw_resources.bind_group, &[]);
