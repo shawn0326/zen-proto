@@ -1,16 +1,44 @@
 mod cull;
 mod draw;
 
+use crate::camera::Camera;
+use crate::primitive::Primitive;
 use cull::*;
 use draw::*;
+
+pub struct PrimitivesContext {
+    pub instance_buffer: wgpu::Buffer,
+    pub instance_count: u32,
+}
+
+impl PrimitivesContext {
+    pub fn from_primitives(device: &wgpu::Device, primitives: &[Primitive]) -> Self {
+        use wgpu::util::DeviceExt;
+
+        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("primitives.instance_buffer"),
+            contents: bytemuck::cast_slice(primitives),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        PrimitivesContext {
+            instance_buffer,
+            instance_count: primitives.len() as u32,
+        }
+    }
+}
+
+pub struct RenderContext {
+    pub primitives: PrimitivesContext,
+    pub cull_resources: CullResources,
+    pub draw_resources: DrawResources,
+}
 
 pub struct Renderer {
     surface: wgpu::Surface<'static>,
     surface_configuration: wgpu::SurfaceConfiguration,
     device: wgpu::Device,
     queue: wgpu::Queue,
-    cull_resources: CullResources,
-    draw_resources: DrawResources,
 }
 
 impl Renderer {
@@ -51,15 +79,21 @@ impl Renderer {
 
         surface.configure(&device, &surface_configuration);
 
-        let cull_resources = create_cull_resources(&device);
-        let draw_resources =
-            create_draw_resources(&device, surface_configuration.format, &cull_resources);
-
         Renderer {
             surface,
             surface_configuration,
             device,
             queue,
+        }
+    }
+
+    pub fn create_context(&self, primitives: &[Primitive]) -> RenderContext {
+        let primitives = PrimitivesContext::from_primitives(&self.device, primitives);
+        let cull_resources = create_cull_resources(&self.device, &primitives);
+        let draw_resources =
+            create_draw_resources(&self.device, self.surface_configuration.format, &primitives);
+        RenderContext {
+            primitives,
             cull_resources,
             draw_resources,
         }
@@ -82,7 +116,12 @@ impl Renderer {
             .configure(&self.device, &self.surface_configuration);
     }
 
-    pub fn render(&mut self) {
+    pub fn render(
+        &mut self,
+        cull_camera: Camera,
+        draw_camera: Camera,
+        render_context: &RenderContext,
+    ) {
         let surface_texture = self.surface.get_current_texture().unwrap();
 
         let mut encoder = self
@@ -92,15 +131,22 @@ impl Renderer {
             });
 
         {
+            render_context
+                .cull_resources
+                .update_frustum(&self.queue, cull_camera.view_projection());
+            render_context
+                .cull_resources
+                .reset_indirect_buffers(&self.queue);
+
             let wg_size = 64;
-            let group_count = (self.cull_resources.instance_count + wg_size - 1) / wg_size;
+            let group_count = (render_context.primitives.instance_count + wg_size - 1) / wg_size;
 
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Frustum Culling Pass"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.cull_resources.cull_pipeline);
-            pass.set_bind_group(0, &self.cull_resources.cull_bind_group, &[]);
+            pass.set_pipeline(&render_context.cull_resources.cull_pipeline);
+            pass.set_bind_group(0, &render_context.cull_resources.cull_bind_group, &[]);
             pass.dispatch_workgroups(group_count, 1, 1);
         }
 
@@ -127,22 +173,24 @@ impl Renderer {
                 ..Default::default()
             });
 
-            render_pass.set_pipeline(&self.draw_resources.pipeline);
-            render_pass.set_bind_group(0, &self.draw_resources.bind_group, &[]);
+            render_context
+                .draw_resources
+                .update_camera_buffer(&self.queue, &draw_camera.view_projection());
+
+            render_pass.set_pipeline(&render_context.draw_resources.pipeline);
+            render_pass.set_bind_group(0, &render_context.draw_resources.bind_group, &[]);
             render_pass.set_index_buffer(
-                self.draw_resources.index_buffer.slice(..),
-                self.draw_resources.index_format,
+                render_context.draw_resources.index_buffer.slice(..),
+                render_context.draw_resources.index_format,
             );
 
             render_pass.multi_draw_indexed_indirect_count(
-                &self.cull_resources.indirect_args_buffer,
+                &render_context.cull_resources.indirect_args_buffer,
                 0,
-                &self.cull_resources.indirect_count_buffer,
+                &render_context.cull_resources.indirect_count_buffer,
                 0,
-                self.cull_resources.instance_count,
+                render_context.primitives.instance_count,
             );
-
-            drop(render_pass);
         }
 
         self.queue.submit(Some(encoder.finish()));

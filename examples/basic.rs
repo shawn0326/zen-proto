@@ -1,15 +1,23 @@
 mod common;
 use common::{
     Example,
-    // orbit_camera_controller::{OrbitCameraController, OrbitCameraControllerOptions},
+    orbit_camera_controller::{OrbitCameraController, OrbitCameraControllerOptions},
     run,
 };
 use std::sync::Arc;
 use winit::window::Window;
-use zen_proto::render::Renderer;
+use zen_proto::{
+    camera::{Camera, PerspectiveProjection},
+    primitive::Primitive,
+    render::{RenderContext, Renderer},
+};
 
 struct Demo {
     renderer: Renderer,
+    cull_camera: Camera,
+    draw_camera: Camera,
+    camera_controller: OrbitCameraController,
+    render_context: RenderContext,
 }
 
 impl Example for Demo {
@@ -17,7 +25,52 @@ impl Example for Demo {
         let instance = wgpu::Instance::default();
         let surface = instance.create_surface(window).unwrap();
         let renderer = Renderer::new(&instance, surface).await;
-        Demo { renderer }
+        let projection = PerspectiveProjection::default();
+        let cull_camera = Camera::new(
+            glam::Mat4::look_at_rh(
+                glam::vec3(0.0, 0.0, 10.0),
+                glam::vec3(0.0, 0.0, 0.0),
+                glam::vec3(0.0, 1.0, 0.0),
+            )
+            .inverse(),
+            projection,
+        );
+        let draw_camera = Camera::new(
+            glam::Mat4::look_at_rh(
+                glam::vec3(-50.0, 50.0, 50.0),
+                glam::vec3(0.0, 0.0, 0.0),
+                glam::vec3(0.0, 1.0, 0.0),
+            )
+            .inverse(),
+            projection,
+        );
+        // for cull camera control
+        let camera_controller = OrbitCameraController::new(OrbitCameraControllerOptions {
+            target: glam::vec3(0.0, 0.0, 0.0),
+            position: Some(glam::vec3(0.0, 0.0, 10.0)),
+            ..Default::default()
+        });
+        let primitive_count = 100_0000u32;
+        let mut primitives = Vec::with_capacity(primitive_count as usize);
+        let grid = (primitive_count as f32).cbrt().ceil() as u32; // 100
+        let spacing = 3.0;
+        for i in 0..primitive_count {
+            let x = (i % grid) as f32 - (grid as f32 - 1.0) * 0.5;
+            let y = ((i / grid) % grid) as f32 - (grid as f32 - 1.0) * 0.5;
+            let z = (i / (grid * grid)) as f32 - (grid as f32 - 1.0) * 0.5;
+            let translation = glam::vec3(x * spacing, y * spacing, z * spacing);
+            let transform = glam::Mat4::from_translation(translation);
+            let sphere = glam::Vec4::new(0.0, 0.0, 0.0, 1.0); // 半径为 1 的单位球体
+            primitives.push(Primitive { transform, sphere });
+        }
+        let render_context = renderer.create_context(&primitives);
+        Demo {
+            renderer,
+            cull_camera,
+            draw_camera,
+            camera_controller,
+            render_context,
+        }
     }
 
     fn resize(&mut self, width: u32, height: u32) {
@@ -27,15 +80,20 @@ impl Example for Demo {
     fn update(&mut self) {}
 
     fn render(&mut self) {
-        self.renderer.render();
+        self.renderer
+            .render(self.cull_camera, self.draw_camera, &self.render_context);
     }
 
     fn mouse_drag(&mut self, dx: f32, dy: f32) {
-        println!("mouse_drag: dx={}, dy={}", dx, dy);
+        self.camera_controller.orbit(dx * 0.01, dy * 0.01);
+        self.cull_camera
+            .set_view(self.camera_controller.view_matrix());
     }
 
     fn mouse_wheel(&mut self, delta_y: f32) {
-        println!("mouse_wheel: delta_y={}", delta_y);
+        self.camera_controller.dolly(delta_y * 0.1);
+        self.cull_camera
+            .set_view(self.camera_controller.view_matrix());
     }
 }
 

@@ -236,6 +236,9 @@ impl OrbitCameraController {
     }
 
     pub fn dolly(&mut self, delta: f32) {
+        if delta == 0.0 {
+            return;
+        }
         self.set_distance(self.distance + delta);
     }
 

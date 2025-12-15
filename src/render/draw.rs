@@ -1,4 +1,5 @@
-use crate::render::cull::{CullResources, InstanceData};
+use crate::primitive::Primitive;
+use crate::render::PrimitivesContext;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -13,12 +14,19 @@ pub struct DrawResources {
     pub bind_group: wgpu::BindGroup,
     pub index_buffer: wgpu::Buffer,
     pub index_format: wgpu::IndexFormat,
+    pub camera_buffer: wgpu::Buffer,
+}
+
+impl DrawResources {
+    pub fn update_camera_buffer(&self, queue: &wgpu::Queue, view_proj: &glam::Mat4) {
+        queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(view_proj));
+    }
 }
 
 pub fn create_draw_resources(
     device: &wgpu::Device,
     surface_format: wgpu::TextureFormat,
-    cull: &CullResources,
+    primitives: &PrimitivesContext,
 ) -> DrawResources {
     use wgpu::util::DeviceExt;
 
@@ -53,17 +61,11 @@ pub fn create_draw_resources(
     });
 
     // camera（先做成静态的，和 cull 里保持一致）
-    let view_mat = glam::Mat4::look_at_rh(
-        glam::vec3(-50.0, 50.0, 50.0),
-        glam::vec3(0.0, 0.0, 0.0),
-        glam::vec3(0.0, 1.0, 0.0),
-    );
-    let proj_mat = glam::Mat4::perspective_rh_gl(45.0f32.to_radians(), 800.0 / 600.0, 0.1, 1000.0);
-    let view_proj = proj_mat * view_mat;
-    let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("draw.camera_buffer"),
-        contents: bytemuck::bytes_of(&view_proj),
+        size: 2 * std::mem::size_of::<glam::Mat4>() as u64,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
     });
 
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -96,8 +98,7 @@ pub fn create_draw_resources(
                     ty: wgpu::BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
                     min_binding_size: Some(
-                        std::num::NonZeroU64::new(std::mem::size_of::<InstanceData>() as u64)
-                            .unwrap(),
+                        std::num::NonZeroU64::new(std::mem::size_of::<Primitive>() as u64).unwrap(),
                     ),
                 },
                 count: None,
@@ -129,7 +130,7 @@ pub fn create_draw_resources(
             },
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: cull.instance_buffer.as_entire_binding(),
+                resource: primitives.instance_buffer.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 2,
@@ -179,5 +180,6 @@ pub fn create_draw_resources(
         bind_group,
         index_buffer,
         index_format: wgpu::IndexFormat::Uint16,
+        camera_buffer,
     }
 }

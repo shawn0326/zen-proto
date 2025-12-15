@@ -1,9 +1,4 @@
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct InstanceData {
-    pub model: glam::Mat4,
-    pub sphere: glam::Vec4, // local space sphere: center.xyz, radius
-}
+use crate::render::PrimitivesContext;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -61,41 +56,67 @@ fn extract_frustum_from_matrix(view_proj: glam::Mat4) -> FrustumUniform {
 pub struct CullResources {
     pub cull_pipeline: wgpu::ComputePipeline,
     pub cull_bind_group: wgpu::BindGroup,
-    pub instance_count: u32,
     pub indirect_args_buffer: wgpu::Buffer,
     pub indirect_count_buffer: wgpu::Buffer,
-    pub instance_buffer: wgpu::Buffer,
+    pub frustum_buffer: wgpu::Buffer,
 }
 
-pub fn create_cull_resources(device: &wgpu::Device) -> CullResources {
+impl CullResources {
+    pub fn update_frustum(&self, queue: &wgpu::Queue, view_proj: glam::Mat4) {
+        let frustum_uniform = extract_frustum_from_matrix(view_proj);
+        queue.write_buffer(
+            &self.frustum_buffer,
+            0,
+            bytemuck::bytes_of(&frustum_uniform),
+        );
+    }
+
+    /// 每帧调用，重置裁剪输出 buffer
+    pub fn reset_indirect_buffers(&self, queue: &wgpu::Queue) {
+        // 重置 indirect_count_buffer 为 0
+        let zero: u32 = 0;
+        queue.write_buffer(&self.indirect_count_buffer, 0, bytemuck::bytes_of(&zero));
+
+        // 可选：重置 indirect_args_buffer（通常只需重置 count，如果 args buffer内容不影响shader可省略）
+        // 如果需要清空所有 args，可以这样：
+        // let zeros = vec![0u8; self.instance_count as usize * std::mem::size_of::<DrawIndexedIndirectArgs>()];
+        // queue.write_buffer(&self.indirect_args_buffer, 0, &zeros);
+    }
+}
+
+pub fn create_cull_resources(
+    device: &wgpu::Device,
+    primitives: &PrimitivesContext,
+) -> CullResources {
     use wgpu::util::DeviceExt;
 
-    let instance_count = 1000000u32;
+    // let instance_count = 100_0000u32;
 
     // 创建 Instance Buffer
-    let mut instances = Vec::new();
-    let grid = (instance_count as f32).cbrt().ceil() as u32; // 100
-    let spacing = 3.0;
-    for i in 0..instance_count {
-        let x = (i % grid) as f32 - (grid as f32 - 1.0) * 0.5;
-        let y = ((i / grid) % grid) as f32 - (grid as f32 - 1.0) * 0.5;
-        let z = (i / (grid * grid)) as f32 - (grid as f32 - 1.0) * 0.5;
-        let translation = glam::vec3(x * spacing, y * spacing, z * spacing);
-        let model = glam::Mat4::from_translation(translation);
-        let sphere = glam::Vec4::new(0.0, 0.0, 0.0, 1.0); // 半径为 1 的单位球体
-        let instance = InstanceData { model, sphere };
-        instances.push(instance);
-    }
-    let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Instance Buffer"),
-        contents: bytemuck::cast_slice(&instances),
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-    });
+    // let mut instances = Vec::new();
+    // let grid = (instance_count as f32).cbrt().ceil() as u32; // 100
+    // let spacing = 3.0;
+    // for i in 0..instance_count {
+    //     let x = (i % grid) as f32 - (grid as f32 - 1.0) * 0.5;
+    //     let y = ((i / grid) % grid) as f32 - (grid as f32 - 1.0) * 0.5;
+    //     let z = (i / (grid * grid)) as f32 - (grid as f32 - 1.0) * 0.5;
+    //     let translation = glam::vec3(x * spacing, y * spacing, z * spacing);
+    //     let model = glam::Mat4::from_translation(translation);
+    //     let sphere = glam::Vec4::new(0.0, 0.0, 0.0, 1.0); // 半径为 1 的单位球体
+    //     let instance = InstanceData { model, sphere };
+    //     instances.push(instance);
+    // }
+    // let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    //     label: Some("Instance Buffer"),
+    //     contents: bytemuck::cast_slice(&instances),
+    //     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+    // });
 
     // 新增：Indirect Args Buffer（最多 instance_count 条）
     let indirect_args_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("Indirect Args Buffer"),
-        size: instance_count as u64 * std::mem::size_of::<DrawIndexedIndirectArgs>() as u64,
+        size: primitives.instance_count as u64
+            * std::mem::size_of::<DrawIndexedIndirectArgs>() as u64,
         usage: wgpu::BufferUsages::STORAGE
             | wgpu::BufferUsages::INDIRECT
             | wgpu::BufferUsages::COPY_DST
@@ -115,22 +136,16 @@ pub fn create_cull_resources(device: &wgpu::Device) -> CullResources {
     });
 
     // 创建 Frustum Uniform Buffer
-    let view_mat = glam::Mat4::look_at_rh(
-        glam::vec3(0.0, 0.0, 10.0),
-        glam::vec3(0.0, 0.0, 0.0),
-        glam::vec3(0.0, 1.0, 0.0),
-    );
-    let proj_mat = glam::Mat4::perspective_rh_gl(45.0f32.to_radians(), 800.0 / 600.0, 0.1, 1000.0);
-    let frustum_uniform = extract_frustum_from_matrix(proj_mat * view_mat);
-    let frustum_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    let frustum_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("Frustum Uniform Buffer"),
-        contents: bytemuck::bytes_of(&frustum_uniform),
+        size: std::mem::size_of::<FrustumUniform>() as u64,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
     });
 
     // 创建 Params Buffer
     let cull_params = CullParams {
-        instance_count,
+        instance_count: primitives.instance_count,
         index_count: 3,
         first_index: 0,
         base_vertex: 0,
@@ -228,7 +243,7 @@ pub fn create_cull_resources(device: &wgpu::Device) -> CullResources {
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: instance_buffer.as_entire_binding(),
+                resource: primitives.instance_buffer.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
@@ -252,9 +267,8 @@ pub fn create_cull_resources(device: &wgpu::Device) -> CullResources {
     CullResources {
         cull_pipeline,
         cull_bind_group,
-        instance_count,
         indirect_args_buffer,
         indirect_count_buffer,
-        instance_buffer,
+        frustum_buffer,
     }
 }
