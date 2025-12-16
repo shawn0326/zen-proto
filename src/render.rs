@@ -2,109 +2,46 @@ mod cull;
 mod draw;
 
 use crate::camera::Camera;
-use crate::mesh::{Mesh, Vertex};
-use crate::primitive::Primitive;
+use crate::material::{Material, MaterialsContext};
+use crate::mesh::{Mesh, MeshesContext};
+use crate::primitive::{Primitive, PrimitivesContext};
 use cull::*;
 use draw::*;
 
-pub struct PrimitivesContext {
-    pub instance_buffer: wgpu::Buffer,
-    pub instance_count: u32,
-}
-
-impl PrimitivesContext {
-    pub fn from_primitives(device: &wgpu::Device, primitives: &[Primitive]) -> Self {
-        use wgpu::util::DeviceExt;
-
-        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("primitives.instance_buffer"),
-            contents: bytemuck::cast_slice(primitives),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-
-        PrimitivesContext {
-            instance_buffer,
-            instance_count: primitives.len() as u32,
-        }
-    }
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct MeshTableEntry {
-    pub index_count: u32,   // number of indices
-    pub first_index: u32,   // offset in the global index buffer (in indices)
-    pub base_vertex: i32,   // offset in the global vertex buffer (in vertices)
-    pub _pad: u32,          // pad to 16 bytes for WGSL/storage friendliness
-    pub sphere: glam::Vec4, // bounding sphere (xyz: center, w: radius)
-}
-
-pub struct MeshesContext {
-    pub vertex_buffer: wgpu::Buffer,
-    pub index_buffer: wgpu::Buffer,
-    pub mesh_table_buffer: wgpu::Buffer,
-}
-
-impl MeshesContext {
-    pub fn from_meshes(device: &wgpu::Device, meshes: &[Mesh]) -> Self {
-        use wgpu::util::DeviceExt;
-
-        let total_vertices: usize = meshes.iter().map(|m| m.vertices.len()).sum();
-        let total_indices: usize = meshes.iter().map(|m| m.indices.len()).sum();
-
-        let mut all_vertices: Vec<Vertex> = Vec::with_capacity(total_vertices);
-        let mut all_indices: Vec<u16> = Vec::with_capacity(total_indices);
-        let mut mesh_table: Vec<MeshTableEntry> = Vec::with_capacity(meshes.len());
-
-        for mesh in meshes {
-            let base_vertex = all_vertices.len() as i32;
-            let first_index = all_indices.len() as u32;
-            let index_count = mesh.indices.len() as u32;
-
-            // 不改写 u16 索引值；用 base_vertex 来做顶点偏移（更安全，避免 u16 溢出）
-            all_vertices.extend_from_slice(&mesh.vertices);
-            all_indices.extend_from_slice(&mesh.indices);
-
-            mesh_table.push(MeshTableEntry {
-                index_count,
-                first_index,
-                base_vertex,
-                _pad: 0,
-                sphere: glam::Vec4::new(0.0, 0.0, 0.0, 1.0),
-            });
-        }
-
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("meshes.vertex_buffer"),
-            contents: bytemuck::cast_slice(&all_vertices),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("meshes.index_buffer"),
-            contents: bytemuck::cast_slice(&all_indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-
-        let mesh_table_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("meshes.mesh_table_buffer"),
-            contents: bytemuck::cast_slice(&mesh_table),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-
-        MeshesContext {
-            vertex_buffer,
-            index_buffer,
-            mesh_table_buffer,
-        }
-    }
-}
-
 pub struct RenderContext {
     pub meshes: MeshesContext,
+    pub materials: MaterialsContext,
     pub primitives: PrimitivesContext,
-    pub cull_resources: CullResources,
-    pub draw_resources: DrawResources,
+    pub frustum_cull_pass: FrustumCullPass,
+    pub draw_pass: DrawPass,
+}
+
+impl RenderContext {
+    pub fn new(
+        renderer: &Renderer,
+        meshes: &[Mesh],
+        materials: &[Material],
+        primitives: &[Primitive],
+    ) -> RenderContext {
+        let meshes = MeshesContext::from_meshes(&renderer.device, meshes);
+        let materials = MaterialsContext::from_materials(&renderer.device, materials);
+        let primitives = PrimitivesContext::from_primitives(&renderer.device, primitives);
+        let frustum_cull_pass = FrustumCullPass::new(&renderer.device, &meshes, &primitives);
+        let draw_pass = DrawPass::new(
+            &renderer.device,
+            renderer.surface_configuration.format,
+            &meshes,
+            &materials,
+            &primitives,
+        );
+        Self {
+            meshes,
+            materials,
+            primitives,
+            frustum_cull_pass,
+            draw_pass,
+        }
+    }
 }
 
 pub struct Renderer {
@@ -177,24 +114,6 @@ impl Renderer {
         }
     }
 
-    pub fn create_context(&self, meshes: &[Mesh], primitives: &[Primitive]) -> RenderContext {
-        let meshes = MeshesContext::from_meshes(&self.device, meshes);
-        let primitives = PrimitivesContext::from_primitives(&self.device, primitives);
-        let cull_resources = create_cull_resources(&self.device, &meshes, &primitives);
-        let draw_resources = create_draw_resources(
-            &self.device,
-            self.surface_configuration.format,
-            &meshes,
-            &primitives,
-        );
-        RenderContext {
-            meshes,
-            primitives,
-            cull_resources,
-            draw_resources,
-        }
-    }
-
     pub fn resize(&mut self, width: u32, height: u32) {
         if width == 0 || height == 0 {
             return;
@@ -242,23 +161,10 @@ impl Renderer {
             });
 
         {
-            render_context
-                .cull_resources
-                .update_frustum(&self.queue, &cull_camera);
-            render_context
-                .cull_resources
-                .reset_indirect_buffers(&self.queue);
-
-            let wg_size = 64;
-            let group_count = (render_context.primitives.instance_count + wg_size - 1) / wg_size;
-
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("Frustum Culling Pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&render_context.cull_resources.cull_pipeline);
-            pass.set_bind_group(0, &render_context.cull_resources.cull_bind_group, &[]);
-            pass.dispatch_workgroups(group_count, 1, 1);
+            let frustum_cull_pass = &render_context.frustum_cull_pass;
+            frustum_cull_pass.update_frustum(&self.queue, &cull_camera);
+            frustum_cull_pass.reset_indirect_buffers(&self.queue);
+            frustum_cull_pass.compute(&mut encoder, render_context.primitives.instance_count);
         }
 
         {
@@ -294,20 +200,20 @@ impl Renderer {
             });
 
             render_context
-                .draw_resources
+                .draw_pass
                 .update_camera_buffer(&self.queue, &draw_camera);
 
-            render_pass.set_pipeline(&render_context.draw_resources.pipeline);
-            render_pass.set_bind_group(0, &render_context.draw_resources.bind_group, &[]);
+            render_pass.set_pipeline(&render_context.draw_pass.pipeline);
+            render_pass.set_bind_group(0, &render_context.draw_pass.bind_group, &[]);
             render_pass.set_index_buffer(
                 render_context.meshes.index_buffer.slice(..),
                 wgpu::IndexFormat::Uint16,
             );
 
             render_pass.multi_draw_indexed_indirect_count(
-                &render_context.cull_resources.indirect_args_buffer,
+                &render_context.frustum_cull_pass.indirect_args_buffer,
                 0,
-                &render_context.cull_resources.indirect_count_buffer,
+                &render_context.frustum_cull_pass.indirect_count_buffer,
                 0,
                 render_context.primitives.instance_count,
             );

@@ -3,10 +3,14 @@ struct Vertex {
     color: vec4f,
 };
 
+struct Material {
+    color: vec4f,
+}
+
 struct InstanceData {
     model: mat4x4f,
     mesh_id: u32,
-    _pad0: u32,
+    material_id: u32,
     _pad1: u32,
     _pad2: u32,
 };
@@ -16,8 +20,9 @@ struct Camera {
 };
 
 @group(0) @binding(0) var<storage, read> vertices: array<Vertex>;
-@group(0) @binding(1) var<storage, read> instances: array<InstanceData>;
-@group(0) @binding(2) var<uniform> camera: Camera;
+@group(0) @binding(1) var<storage, read> materials: array<Material>;
+@group(0) @binding(2) var<storage, read> instances: array<InstanceData>;
+@group(0) @binding(3) var<uniform> camera: Camera;
 
 struct VsOut {
     @builtin(position) pos: vec4f,
@@ -31,10 +36,11 @@ fn vs_main(
 ) -> VsOut {
     let v: Vertex = vertices[vtx];
     let model = instances[inst].model;
+    let material = materials[instances[inst].material_id];
 
     var out: VsOut;
     out.pos = camera.view_proj * model * v.position;
-    out.color = v.color;
+    out.color = v.color * material.color;
     return out;
 }
 

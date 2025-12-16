@@ -9,7 +9,7 @@ use std::sync::Arc;
 use winit::window::Window;
 use zen_proto::{
     camera::{Camera, PerspectiveProjection},
-    mesh,
+    material, mesh,
     primitive::Primitive,
     render::{RenderContext, Renderer},
 };
@@ -53,26 +53,36 @@ impl Example for Demo {
             ..Default::default()
         });
 
-        let mut meshes = vec![]; // 先不使用 mesh
-
+        let mut meshes = vec![];
         meshes.push(mesh::create_triangle_mesh());
         meshes.push(mesh::create_box_mesh());
+
+        let mut materials = vec![];
+        materials.push(material::Material {
+            color: glam::Vec4::new(1.0, 0.0, 0.0, 1.0),
+        });
+        materials.push(material::Material {
+            color: glam::Vec4::new(0.0, 1.0, 0.0, 1.0),
+        });
+        materials.push(material::Material {
+            color: glam::Vec4::new(0.0, 0.0, 1.0, 1.0),
+        });
 
         let primitive_count = 100_0000u32;
         let mut primitives = Vec::with_capacity(primitive_count as usize);
         let mut rng = rand::rng();
         for i in 0..primitive_count {
-            let translation = rng.random::<glam::Vec3>() * 100. - glam::vec3(50.0, 50.0, 50.0);
+            let translation = rng.random::<glam::Vec3>() * 200. - glam::Vec3::ONE * 100.;
             let transform = glam::Mat4::from_translation(translation);
             primitives.push(Primitive {
                 transform,
                 mesh_id: i % 2,
-                _pad: [0; 3],
+                material_id: i % 3,
+                _pad: [0; 2],
             });
         }
 
-        let render_context = renderer.create_context(&meshes, &primitives);
-
+        let render_context = RenderContext::new(&renderer, &meshes, &materials, &primitives);
         Demo {
             renderer,
             cull_camera,

@@ -1,7 +1,7 @@
 struct Instance {
     model: mat4x4<f32>,
     mesh_id: u32,
-    _pad0: u32,
+    material_id: u32,
     _pad1: u32,
     _pad2: u32,
 };
