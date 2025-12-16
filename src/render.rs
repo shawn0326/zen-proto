@@ -110,6 +110,7 @@ pub struct RenderContext {
 pub struct Renderer {
     surface: wgpu::Surface<'static>,
     surface_configuration: wgpu::SurfaceConfiguration,
+    depth_stencil_texture: wgpu::Texture,
     device: wgpu::Device,
     queue: wgpu::Queue,
 }
@@ -152,9 +153,25 @@ impl Renderer {
 
         surface.configure(&device, &surface_configuration);
 
+        let depth_stencil_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("depth_stencil_texture"),
+            size: wgpu::Extent3d {
+                width: surface_configuration.width,
+                height: surface_configuration.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth24PlusStencil8,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+
         Renderer {
             surface,
             surface_configuration,
+            depth_stencil_texture,
             device,
             queue,
         }
@@ -193,6 +210,21 @@ impl Renderer {
 
         self.surface
             .configure(&self.device, &self.surface_configuration);
+
+        self.depth_stencil_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("depth_stencil_texture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth24PlusStencil8,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
     }
 
     pub fn render(
@@ -248,7 +280,16 @@ impl Renderer {
                         store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self
+                        .depth_stencil_texture
+                        .create_view(&wgpu::TextureViewDescriptor::default()),
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
                 ..Default::default()
             });
 
