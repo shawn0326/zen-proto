@@ -9,6 +9,7 @@ use std::sync::Arc;
 use winit::window::Window;
 use zen_proto::{
     camera::{Camera, PerspectiveProjection},
+    mesh,
     primitive::Primitive,
     render::{RenderContext, Renderer},
 };
@@ -51,16 +52,27 @@ impl Example for Demo {
             position: Some(glam::vec3(0.0, 0.0, 10.0)),
             ..Default::default()
         });
+
+        let mut meshes = vec![]; // 先不使用 mesh
+
+        meshes.push(mesh::create_triangle_mesh());
+        meshes.push(mesh::create_box_mesh());
+
         let primitive_count = 100_0000u32;
         let mut primitives = Vec::with_capacity(primitive_count as usize);
         let mut rng = rand::rng();
-        for _ in 0..primitive_count {
+        for i in 0..primitive_count {
             let translation = rng.random::<glam::Vec3>() * 100. - glam::vec3(50.0, 50.0, 50.0);
             let transform = glam::Mat4::from_translation(translation);
-            let sphere = glam::Vec4::new(0.0, 0.0, 0.0, 1.0); // 半径为 1 的单位球体
-            primitives.push(Primitive { transform, sphere });
+            primitives.push(Primitive {
+                transform,
+                mesh_id: i % 2,
+                _pad: [0; 3],
+            });
         }
-        let render_context = renderer.create_context(&primitives);
+
+        let render_context = renderer.create_context(&meshes, &primitives);
+
         Demo {
             renderer,
             cull_camera,

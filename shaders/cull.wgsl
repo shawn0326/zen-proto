@@ -1,6 +1,17 @@
 struct Instance {
     model: mat4x4<f32>,
-    sphere: vec4<f32>, // center.xyz, radius
+    mesh_id: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+};
+
+struct MeshTableEntry {
+    index_count: u32,
+    first_index: u32,
+    base_vertex: i32,
+    _pad: u32,
+    sphere: vec4<f32>, // xyz center, w radius (mesh local)
 };
 
 // 6 个 world space 平面：normal.xyz, d
@@ -24,9 +35,9 @@ struct Counter {
 
 struct Params {
     instance_count: u32,
-    index_count: u32,
-    first_index: u32,
-    base_vertex: i32,
+    mesh_count: u32,
+    _pad0: u32,
+    _pad1: u32,
 };
 
 @group(0) @binding(0)
@@ -45,6 +56,9 @@ var<uniform> params: Params;
 @group(0) @binding(4)
 var<storage, read_write> indirect_count: Counter;
 
+@group(0) @binding(5)
+var<storage, read> mesh_table: array<MeshTableEntry>;
+
 /// 球体与平面组的简单剔除：
 /// 平面方程：dot(n, x) + d = distance
 /// 如果对任一平面 distance < -radius => 在平面外面 => 剔除
@@ -57,10 +71,16 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let inst = instances[index];
 
+    if (inst.mesh_id >= params.mesh_count) {
+        return;
+    }
+
+    let mesh = mesh_table[inst.mesh_id];
+
     // local sphere center -> world space
-    let local_center = vec4<f32>(inst.sphere.xyz, 1.0);
+    let local_center = vec4<f32>(mesh.sphere.xyz, 1.0);
     let world_center = (inst.model * local_center).xyz;
-    let radius = inst.sphere.w;
+    let radius = mesh.sphere.w;
 
     var visible = true;
 
@@ -76,10 +96,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (visible) {
         let dst = atomicAdd(&indirect_count.value, 1u);
         indirect_args[dst] = DrawIndexedIndirectArgs(
-            params.index_count,
+            mesh.index_count,
             1u,
-            params.first_index,
-            params.base_vertex,
+            mesh.first_index,
+            mesh.base_vertex,
             index // first_instance：VS 里 instance_index 会带上这个 offset
         );
     }

@@ -2,6 +2,7 @@ mod cull;
 mod draw;
 
 use crate::camera::Camera;
+use crate::mesh::{Mesh, Vertex};
 use crate::primitive::Primitive;
 use cull::*;
 use draw::*;
@@ -28,7 +29,79 @@ impl PrimitivesContext {
     }
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct MeshTableEntry {
+    pub index_count: u32,   // number of indices
+    pub first_index: u32,   // offset in the global index buffer (in indices)
+    pub base_vertex: i32,   // offset in the global vertex buffer (in vertices)
+    pub _pad: u32,          // pad to 16 bytes for WGSL/storage friendliness
+    pub sphere: glam::Vec4, // bounding sphere (xyz: center, w: radius)
+}
+
+pub struct MeshesContext {
+    pub vertex_buffer: wgpu::Buffer,
+    pub index_buffer: wgpu::Buffer,
+    pub mesh_table_buffer: wgpu::Buffer,
+}
+
+impl MeshesContext {
+    pub fn from_meshes(device: &wgpu::Device, meshes: &[Mesh]) -> Self {
+        use wgpu::util::DeviceExt;
+
+        let total_vertices: usize = meshes.iter().map(|m| m.vertices.len()).sum();
+        let total_indices: usize = meshes.iter().map(|m| m.indices.len()).sum();
+
+        let mut all_vertices: Vec<Vertex> = Vec::with_capacity(total_vertices);
+        let mut all_indices: Vec<u16> = Vec::with_capacity(total_indices);
+        let mut mesh_table: Vec<MeshTableEntry> = Vec::with_capacity(meshes.len());
+
+        for mesh in meshes {
+            let base_vertex = all_vertices.len() as i32;
+            let first_index = all_indices.len() as u32;
+            let index_count = mesh.indices.len() as u32;
+
+            // 不改写 u16 索引值；用 base_vertex 来做顶点偏移（更安全，避免 u16 溢出）
+            all_vertices.extend_from_slice(&mesh.vertices);
+            all_indices.extend_from_slice(&mesh.indices);
+
+            mesh_table.push(MeshTableEntry {
+                index_count,
+                first_index,
+                base_vertex,
+                _pad: 0,
+                sphere: glam::Vec4::new(0.0, 0.0, 0.0, 1.0),
+            });
+        }
+
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("meshes.vertex_buffer"),
+            contents: bytemuck::cast_slice(&all_vertices),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("meshes.index_buffer"),
+            contents: bytemuck::cast_slice(&all_indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+
+        let mesh_table_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("meshes.mesh_table_buffer"),
+            contents: bytemuck::cast_slice(&mesh_table),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        MeshesContext {
+            vertex_buffer,
+            index_buffer,
+            mesh_table_buffer,
+        }
+    }
+}
+
 pub struct RenderContext {
+    pub meshes: MeshesContext,
     pub primitives: PrimitivesContext,
     pub cull_resources: CullResources,
     pub draw_resources: DrawResources,
@@ -87,12 +160,18 @@ impl Renderer {
         }
     }
 
-    pub fn create_context(&self, primitives: &[Primitive]) -> RenderContext {
+    pub fn create_context(&self, meshes: &[Mesh], primitives: &[Primitive]) -> RenderContext {
+        let meshes = MeshesContext::from_meshes(&self.device, meshes);
         let primitives = PrimitivesContext::from_primitives(&self.device, primitives);
-        let cull_resources = create_cull_resources(&self.device, &primitives);
-        let draw_resources =
-            create_draw_resources(&self.device, self.surface_configuration.format, &primitives);
+        let cull_resources = create_cull_resources(&self.device, &meshes, &primitives);
+        let draw_resources = create_draw_resources(
+            &self.device,
+            self.surface_configuration.format,
+            &meshes,
+            &primitives,
+        );
         RenderContext {
+            meshes,
             primitives,
             cull_resources,
             draw_resources,
@@ -180,8 +259,8 @@ impl Renderer {
             render_pass.set_pipeline(&render_context.draw_resources.pipeline);
             render_pass.set_bind_group(0, &render_context.draw_resources.bind_group, &[]);
             render_pass.set_index_buffer(
-                render_context.draw_resources.index_buffer.slice(..),
-                render_context.draw_resources.index_format,
+                render_context.meshes.index_buffer.slice(..),
+                wgpu::IndexFormat::Uint16,
             );
 
             render_pass.multi_draw_indexed_indirect_count(

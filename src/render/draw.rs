@@ -1,20 +1,11 @@
 use crate::camera::Camera;
+use crate::mesh::Vertex;
 use crate::primitive::Primitive;
-use crate::render::PrimitivesContext;
-
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct Vertex {
-    // 为了 WGSL/std430 对齐简单，使用 vec4 存
-    pub position: glam::Vec4,
-    pub color: glam::Vec4,
-}
+use crate::render::{MeshesContext, PrimitivesContext};
 
 pub struct DrawResources {
     pub pipeline: wgpu::RenderPipeline,
     pub bind_group: wgpu::BindGroup,
-    pub index_buffer: wgpu::Buffer,
-    pub index_format: wgpu::IndexFormat,
     pub camera_buffer: wgpu::Buffer,
 }
 
@@ -31,40 +22,9 @@ impl DrawResources {
 pub fn create_draw_resources(
     device: &wgpu::Device,
     surface_format: wgpu::TextureFormat,
+    meshes: &MeshesContext,
     primitives: &PrimitivesContext,
 ) -> DrawResources {
-    use wgpu::util::DeviceExt;
-
-    // 先固定一个三角形：position + color
-    let vertices: [Vertex; 3] = [
-        Vertex {
-            position: glam::Vec4::new(-0.5, -0.5, 0.0, 1.0),
-            color: glam::Vec4::new(1.0, 0.0, 0.0, 1.0),
-        },
-        Vertex {
-            position: glam::Vec4::new(0.5, -0.5, 0.0, 1.0),
-            color: glam::Vec4::new(0.0, 1.0, 0.0, 1.0),
-        },
-        Vertex {
-            position: glam::Vec4::new(0.0, 0.5, 0.0, 1.0),
-            color: glam::Vec4::new(0.0, 0.0, 1.0, 1.0),
-        },
-    ];
-
-    let indices: [u16; 3] = [0, 1, 2];
-
-    let vertex_storage = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("draw.vertex_storage"),
-        contents: bytemuck::cast_slice(&vertices),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-
-    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("draw.index_buffer"),
-        contents: bytemuck::cast_slice(&indices),
-        usage: wgpu::BufferUsages::INDEX,
-    });
-
     // camera（先做成静态的，和 cull 里保持一致）
     let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("draw.camera_buffer"),
@@ -131,7 +91,7 @@ pub fn create_draw_resources(
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: vertex_storage.as_entire_binding(),
+                resource: meshes.vertex_buffer.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
@@ -183,8 +143,6 @@ pub fn create_draw_resources(
     DrawResources {
         pipeline,
         bind_group,
-        index_buffer,
-        index_format: wgpu::IndexFormat::Uint16,
         camera_buffer,
     }
 }

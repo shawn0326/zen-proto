@@ -1,4 +1,7 @@
-use crate::{camera::Camera, render::PrimitivesContext};
+use crate::{
+    camera::Camera,
+    render::{MeshesContext, PrimitivesContext},
+};
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -11,9 +14,9 @@ pub struct FrustumUniform {
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct CullParams {
     pub instance_count: u32,
-    pub index_count: u32,
-    pub first_index: u32,
-    pub base_vertex: i32,
+    pub mesh_count: u32,
+    pub _pad0: u32,
+    pub _pad1: u32,
 }
 
 #[repr(C)]
@@ -58,6 +61,7 @@ impl CullResources {
 
 pub fn create_cull_resources(
     device: &wgpu::Device,
+    meshes: &MeshesContext,
     primitives: &PrimitivesContext,
 ) -> CullResources {
     use wgpu::util::DeviceExt;
@@ -96,9 +100,9 @@ pub fn create_cull_resources(
     // 创建 Params Buffer
     let cull_params = CullParams {
         instance_count: primitives.instance_count,
-        index_count: 3,
-        first_index: 0,
-        base_vertex: 0,
+        mesh_count: 2,
+        _pad0: 0,
+        _pad1: 0,
     };
     let params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Cull Params Buffer"),
@@ -169,6 +173,17 @@ pub fn create_cull_resources(
                 },
                 count: None,
             },
+            // mesh table
+            wgpu::BindGroupLayoutEntry {
+                binding: 5,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
         ],
     });
 
@@ -210,6 +225,10 @@ pub fn create_cull_resources(
             wgpu::BindGroupEntry {
                 binding: 4,
                 resource: indirect_count_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: meshes.mesh_table_buffer.as_entire_binding(),
             },
         ],
     });
