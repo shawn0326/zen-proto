@@ -1,18 +1,24 @@
-mod cull;
-mod draw;
+mod dispatch_prepare_pass;
+mod draw_pass;
+mod draw_prepare_pass;
+mod main_cull_pass;
 
 use crate::camera::Camera;
 use crate::material::{Material, MaterialsContext};
 use crate::mesh::{Mesh, MeshesContext};
 use crate::primitive::{Primitive, PrimitivesContext};
-use cull::*;
-use draw::*;
+use dispatch_prepare_pass::DispatchPreparePass;
+use draw_pass::DrawPass;
+use draw_prepare_pass::DrawPreparePass;
+use main_cull_pass::MainCullPass;
 
 pub struct RenderContext {
     pub meshes: MeshesContext,
     pub materials: MaterialsContext,
     pub primitives: PrimitivesContext,
-    pub frustum_cull_pass: FrustumCullPass,
+    pub main_cull_pass: MainCullPass,
+    pub dispatch_prepare_pass: DispatchPreparePass,
+    pub draw_prepare_pass: DrawPreparePass,
     pub draw_pass: DrawPass,
 }
 
@@ -26,7 +32,16 @@ impl RenderContext {
         let meshes = MeshesContext::from_meshes(&renderer.device, meshes);
         let materials = MaterialsContext::from_materials(&renderer.device, materials);
         let primitives = PrimitivesContext::from_primitives(&renderer.device, primitives);
-        let frustum_cull_pass = FrustumCullPass::new(&renderer.device, &meshes, &primitives);
+        let main_cull_pass = MainCullPass::new(&renderer.device, &meshes, &primitives);
+        let dispatch_prepare_pass =
+            DispatchPreparePass::new(&renderer.device, main_cull_pass.visible_count_buffer());
+        let draw_prepare_pass = DrawPreparePass::new(
+            &renderer.device,
+            &meshes,
+            &primitives,
+            main_cull_pass.visible_instances_buffer(),
+            main_cull_pass.visible_count_buffer(),
+        );
         let draw_pass = DrawPass::new(
             &renderer.device,
             renderer.surface_configuration.format,
@@ -38,7 +53,9 @@ impl RenderContext {
             meshes,
             materials,
             primitives,
-            frustum_cull_pass,
+            main_cull_pass,
+            dispatch_prepare_pass,
+            draw_prepare_pass,
             draw_pass,
         }
     }
@@ -161,10 +178,17 @@ impl Renderer {
             });
 
         {
-            let frustum_cull_pass = &render_context.frustum_cull_pass;
-            frustum_cull_pass.update_frustum(&self.queue, &cull_camera);
-            frustum_cull_pass.reset_indirect_buffers(&self.queue);
-            frustum_cull_pass.compute(&mut encoder, render_context.primitives.instance_count);
+            let main_cull_pass = &render_context.main_cull_pass;
+            main_cull_pass.update_frustum(&self.queue, &cull_camera);
+            main_cull_pass.reset_visible_count(&self.queue);
+            main_cull_pass.encode(&mut encoder, render_context.primitives.instance_count);
+
+            render_context.dispatch_prepare_pass.encode(&mut encoder);
+
+            render_context.draw_prepare_pass.encode_indirect(
+                &mut encoder,
+                render_context.dispatch_prepare_pass.dispatch_args_buffer(),
+            );
         }
 
         {
@@ -211,9 +235,9 @@ impl Renderer {
             );
 
             render_pass.multi_draw_indexed_indirect_count(
-                &render_context.frustum_cull_pass.indirect_args_buffer,
+                render_context.draw_prepare_pass.indirect_args_buffer(),
                 0,
-                &render_context.frustum_cull_pass.indirect_count_buffer,
+                render_context.main_cull_pass.visible_count_buffer(),
                 0,
                 render_context.primitives.instance_count,
             );

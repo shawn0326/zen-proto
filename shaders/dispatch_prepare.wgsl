@@ -3,9 +3,9 @@ struct Counters {
 };
 
 struct DispatchArgs {
-    x: u32;
-    y: u32;
-    z: u32;
+    x: u32,
+    y: u32,
+    z: u32,
 };
 
 const WG_SIZE: u32 = 64u;

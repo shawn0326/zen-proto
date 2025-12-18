@@ -24,6 +24,7 @@ pub struct MeshesContext {
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
     pub mesh_table_buffer: wgpu::Buffer,
+    pub mesh_count: u32,
 }
 
 impl MeshesContext {
@@ -77,6 +78,7 @@ impl MeshesContext {
             vertex_buffer,
             index_buffer,
             mesh_table_buffer,
+            mesh_count: meshes.len() as u32,
         }
     }
 }
