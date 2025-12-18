@@ -1,5 +1,6 @@
 struct Vertex {
     position: vec4f,
+    normal: vec4f,
     color: vec4f,
 };
 
@@ -27,6 +28,7 @@ struct Camera {
 struct VsOut {
     @builtin(position) pos: vec4f,
     @location(0) color: vec4f,
+    @location(1) normal: vec3f,
 };
 
 @vertex
@@ -38,13 +40,24 @@ fn vs_main(
     let model = instances[inst].model;
     let material = materials[instances[inst].material_id];
 
+    let normal_mat = mat3x3f(
+        model[0].xyz,
+        model[1].xyz,
+        model[2].xyz
+    );
+    let world_normal = normalize(normal_mat * v.normal.xyz);
+
     var out: VsOut;
     out.pos = camera.view_proj * model * v.position;
     out.color = v.color * material.color;
+    out.normal = world_normal;
     return out;
 }
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4f {
-    return in.color;
+    let light_dir = normalize(vec3f(0.5, 1.0, 0.8));
+    let n_dot_l = max(dot(in.normal, light_dir), 0.0);
+    let diffuse = 0.2 + 0.8 * n_dot_l; // 环境光+漫反射
+    return in.color * diffuse;
 }

@@ -40,7 +40,7 @@ impl Example for Demo {
         );
         let debug_camera = Camera::new(
             glam::Mat4::look_at_rh(
-                glam::vec3(-50.0, 50.0, 50.0),
+                glam::vec3(-150.0, 150.0, 150.0),
                 glam::vec3(0.0, 0.0, 0.0),
                 glam::vec3(0.0, 1.0, 0.0),
             )
@@ -57,28 +57,46 @@ impl Example for Demo {
         let mut meshes = vec![];
         meshes.push(mesh::create_triangle_mesh());
         meshes.push(mesh::create_box_mesh());
+        meshes.push(mesh::create_sphere_mesh(6));
 
         let mut materials = vec![];
-        materials.push(material::Material {
-            color: glam::Vec4::new(1.0, 0.0, 0.0, 1.0),
-        });
-        materials.push(material::Material {
-            color: glam::Vec4::new(0.0, 1.0, 0.0, 1.0),
-        });
-        materials.push(material::Material {
-            color: glam::Vec4::new(0.0, 0.0, 1.0, 1.0),
-        });
+        let mut rng = rand::rng();
+        for _ in 0..20 {
+            let hue = rng.random::<f32>() * 360.0;
+            let saturation = 1.0_f32;
+            let lightness = 0.5_f32;
+
+            // Convert HSL to RGB
+            let c = (1.0 - (2.0 * lightness - 1.0).abs()) * saturation;
+            let x = c * (1.0 - ((hue / 60.0) % 2.0 - 1.0).abs());
+            let m = lightness - c / 2.0;
+
+            let (r, g, b) = match hue as u32 {
+                0..60 => (c, x, 0.0),
+                60..120 => (x, c, 0.0),
+                120..180 => (0.0, c, x),
+                180..240 => (0.0, x, c),
+                240..300 => (x, 0.0, c),
+                _ => (c, 0.0, x),
+            };
+
+            materials.push(material::Material {
+                color: glam::Vec4::new(r + m, g + m, b + m, 1.0),
+            });
+        }
 
         let primitive_count = 100_0000u32;
         let mut primitives = Vec::with_capacity(primitive_count as usize);
         let mut rng = rand::rng();
         for i in 0..primitive_count {
-            let translation = rng.random::<glam::Vec3>() * 200. - glam::Vec3::ONE * 100.;
+            let translation = rng.random::<glam::Vec3>() * 200. - 100.;
+            let scale = rng.random::<f32>() * 0.8 + 0.5;
             let transform = glam::Mat4::from_translation(translation);
+            let transform = transform * glam::Mat4::from_scale(glam::vec3(scale, scale, scale));
             primitives.push(Primitive {
                 transform,
-                mesh_id: i % 2,
-                material_id: i % 3,
+                mesh_id: i % meshes.len() as u32,
+                material_id: i % materials.len() as u32,
                 _pad: [0; 2],
             });
         }
