@@ -16,8 +16,8 @@ use zen_proto::{
 
 struct Demo {
     renderer: Renderer,
-    cull_camera: Camera,
-    draw_camera: Camera,
+    camera: Camera,
+    debug_camera: Camera,
     camera_controller: OrbitCameraController,
     render_context: RenderContext,
 }
@@ -28,7 +28,7 @@ impl Example for Demo {
         let surface = instance.create_surface(window).unwrap();
         let renderer = Renderer::new(&instance, surface).await;
         let projection = PerspectiveProjection::default();
-        let cull_camera = Camera::new(
+        let camera = Camera::new(
             glam::Mat4::look_at_rh(
                 glam::vec3(0.0, 0.0, 10.0),
                 glam::vec3(0.0, 0.0, 0.0),
@@ -37,7 +37,7 @@ impl Example for Demo {
             .inverse(),
             projection,
         );
-        let draw_camera = Camera::new(
+        let debug_camera = Camera::new(
             glam::Mat4::look_at_rh(
                 glam::vec3(-50.0, 50.0, 50.0),
                 glam::vec3(0.0, 0.0, 0.0),
@@ -85,8 +85,8 @@ impl Example for Demo {
         let render_context = RenderContext::new(&renderer, &meshes, &materials, &primitives);
         Demo {
             renderer,
-            cull_camera,
-            draw_camera,
+            camera,
+            debug_camera,
             camera_controller,
             render_context,
         }
@@ -100,19 +100,17 @@ impl Example for Demo {
 
     fn render(&mut self) {
         self.renderer
-            .render(self.cull_camera, self.draw_camera, &self.render_context);
+            .render(self.camera, Some(self.debug_camera), &self.render_context);
     }
 
     fn mouse_drag(&mut self, dx: f32, dy: f32) {
         self.camera_controller.orbit(dx * 0.01, dy * 0.01);
-        self.cull_camera
-            .set_view(self.camera_controller.view_matrix());
+        self.camera.set_view(self.camera_controller.view_matrix());
     }
 
     fn mouse_wheel(&mut self, delta_y: f32) {
         self.camera_controller.dolly(delta_y);
-        self.cull_camera
-            .set_view(self.camera_controller.view_matrix());
+        self.camera.set_view(self.camera_controller.view_matrix());
     }
 }
 

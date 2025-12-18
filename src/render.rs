@@ -165,8 +165,8 @@ impl Renderer {
 
     pub fn render(
         &mut self,
-        cull_camera: Camera,
-        draw_camera: Camera,
+        camera: Camera,
+        debug_camera: Option<Camera>,
         render_context: &RenderContext,
     ) {
         let surface_texture = self.surface.get_current_texture().unwrap();
@@ -177,71 +177,38 @@ impl Renderer {
                 label: Some("Render Encoder"),
             });
 
-        {
-            let main_cull_pass = &render_context.main_cull_pass;
-            main_cull_pass.update_frustum(&self.queue, &cull_camera);
-            main_cull_pass.reset_visible_count(&self.queue);
-            main_cull_pass.encode(&mut encoder, render_context.primitives.instance_count);
+        // Step 1: 视锥裁剪
+        let main_cull_pass = &render_context.main_cull_pass;
+        main_cull_pass.update_frustum(&self.queue, &camera);
+        main_cull_pass.reset_visible_count(&self.queue);
+        main_cull_pass.encode(&mut encoder, render_context.primitives.instance_count);
 
-            render_context.dispatch_prepare_pass.encode(&mut encoder);
+        // Step 2: 准备 Dispatch 参数
+        render_context.dispatch_prepare_pass.encode(&mut encoder);
 
-            render_context.draw_prepare_pass.encode_indirect(
-                &mut encoder,
-                render_context.dispatch_prepare_pass.dispatch_args_buffer(),
-            );
-        }
+        // Step 3: 准备 DrawIndirect 参数
+        render_context.draw_prepare_pass.encode_indirect(
+            &mut encoder,
+            render_context.dispatch_prepare_pass.dispatch_args_buffer(),
+        );
 
-        {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &surface_texture
-                        .texture
-                        .create_view(&wgpu::TextureViewDescriptor::default()),
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.1,
-                            g: 0.2,
-                            b: 0.3,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self
-                        .depth_stencil_texture
-                        .create_view(&wgpu::TextureViewDescriptor::default()),
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                ..Default::default()
-            });
-
-            render_context
-                .draw_pass
-                .update_camera_buffer(&self.queue, &draw_camera);
-
-            render_pass.set_pipeline(&render_context.draw_pass.pipeline);
-            render_pass.set_bind_group(0, &render_context.draw_pass.bind_group, &[]);
-            render_pass.set_index_buffer(
-                render_context.meshes.index_buffer.slice(..),
-                wgpu::IndexFormat::Uint16,
-            );
-
-            render_pass.multi_draw_indexed_indirect_count(
-                render_context.draw_prepare_pass.indirect_args_buffer(),
-                0,
-                render_context.main_cull_pass.visible_count_buffer(),
-                0,
-                render_context.primitives.instance_count,
-            );
-        }
+        // Step 4: 绘制
+        let draw_pass = &render_context.draw_pass;
+        let camera_to_use = debug_camera.as_ref().unwrap_or(&camera);
+        draw_pass.update_camera_buffer(&self.queue, camera_to_use);
+        draw_pass.encode(
+            &mut encoder,
+            &surface_texture
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default()),
+            &self
+                .depth_stencil_texture
+                .create_view(&wgpu::TextureViewDescriptor::default()),
+            &render_context.meshes.index_buffer,
+            render_context.draw_prepare_pass.indirect_args_buffer(),
+            main_cull_pass.visible_count_buffer(),
+            render_context.primitives.instance_count,
+        );
 
         self.queue.submit(Some(encoder.finish()));
 
