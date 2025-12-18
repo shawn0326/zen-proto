@@ -31,6 +31,7 @@ struct App<E: Example> {
     fps_tracker: FrameRateTracker,
     tick_interval: Duration,
     next_tick: Option<Instant>,
+    fixed_fps: Option<u8>,
     mouse_left_down: bool,
     last_cursor_pos: Option<PhysicalPosition<f64>>,
 }
@@ -41,10 +42,21 @@ impl<E: Example> Default for App<E> {
             window: None,
             example: None,
             fps_tracker: FrameRateTracker::default(),
-            tick_interval: Duration::from_nanos(8_333_333), // ~120Hz
+            tick_interval: Duration::from_nanos(16_666_667), // ~60Hz
             next_tick: None,
+            fixed_fps: None,
             mouse_left_down: false,
             last_cursor_pos: None,
+        }
+    }
+}
+
+impl<E: Example> App<E> {
+    fn with_fixed_fps(fps: u8) -> Self {
+        Self {
+            tick_interval: Duration::from_secs_f64(1.0 / fps as f64),
+            fixed_fps: Some(fps),
+            ..Default::default()
         }
     }
 }
@@ -56,6 +68,21 @@ impl<E: Example> ApplicationHandler for App<E> {
                 .create_window(Window::default_attributes())
                 .unwrap(),
         );
+
+        if let Some(fps) = self.fixed_fps {
+            println!("Using fixed FPS: {}", fps);
+            self.tick_interval = Duration::from_secs_f64(1.0 / fps as f64);
+        } else {
+            let hz = window
+                .current_monitor()
+                .and_then(|m| m.refresh_rate_millihertz())
+                .map(|mhz| mhz as f64 / 1000.0)
+                .filter(|hz| *hz > 1.0)
+                .unwrap_or(60.0);
+            println!("Monitor refresh rate: {:.1} Hz", hz);
+            self.tick_interval = Duration::from_secs_f64(1.0 / hz);
+        }
+
         let example = E::init(window.clone()).block_on();
         self.window = Some(window);
         self.example = Some(example);
@@ -152,9 +179,12 @@ impl<E: Example> ApplicationHandler for App<E> {
     }
 }
 
-pub fn run<E: Example>() {
+pub fn run<E: Example>(fixed_fps: Option<u8>) {
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Wait);
-    let mut app = App::<E>::default();
+    let mut app = match fixed_fps {
+        Some(fps) => App::<E>::with_fixed_fps(fps),
+        None => App::<E>::default(),
+    };
     event_loop.run_app(&mut app).unwrap();
 }
