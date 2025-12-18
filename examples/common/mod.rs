@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use winit::{
     application::ApplicationHandler,
     dpi::PhysicalPosition,
-    event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent},
+    event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     window::{Window, WindowId},
 };
@@ -22,6 +22,7 @@ pub trait Example {
     fn render(&mut self);
     fn mouse_drag(&mut self, _dx: f32, _dy: f32) {}
     fn mouse_wheel(&mut self, _delta_y: f32) {}
+    fn key_input(&mut self, _key_event: KeyEvent) {}
 }
 
 struct App<E: Example> {
@@ -107,6 +108,11 @@ impl<E: Example> ApplicationHandler for App<E> {
                     if !self.mouse_left_down {
                         self.last_cursor_pos = None;
                     }
+                }
+            }
+            WindowEvent::KeyboardInput { event, .. } => {
+                if let Some(example) = &mut self.example {
+                    example.key_input(event);
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {

@@ -20,6 +20,7 @@ struct Demo {
     debug_camera: Camera,
     camera_controller: OrbitCameraController,
     render_context: RenderContext,
+    use_debug_camera: bool,
 }
 
 impl Example for Demo {
@@ -89,6 +90,7 @@ impl Example for Demo {
             debug_camera,
             camera_controller,
             render_context,
+            use_debug_camera: false,
         }
     }
 
@@ -99,8 +101,13 @@ impl Example for Demo {
     fn update(&mut self) {}
 
     fn render(&mut self) {
+        let debug_camera = if self.use_debug_camera {
+            Some(self.debug_camera)
+        } else {
+            None
+        };
         self.renderer
-            .render(self.camera, Some(self.debug_camera), &self.render_context);
+            .render(self.camera, debug_camera, &self.render_context);
     }
 
     fn mouse_drag(&mut self, dx: f32, dy: f32) {
@@ -111,6 +118,15 @@ impl Example for Demo {
     fn mouse_wheel(&mut self, delta_y: f32) {
         self.camera_controller.dolly(delta_y);
         self.camera.set_view(self.camera_controller.view_matrix());
+    }
+
+    fn key_input(&mut self, key_event: winit::event::KeyEvent) {
+        if key_event.physical_key == winit::keyboard::KeyCode::KeyD
+            && key_event.state == winit::event::ElementState::Pressed
+        {
+            self.use_debug_camera = !self.use_debug_camera;
+            println!("Use debug camera: {}", self.use_debug_camera);
+        }
     }
 }
 
