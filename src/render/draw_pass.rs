@@ -1,8 +1,8 @@
 use crate::camera::Camera;
-use crate::material::{Material, MaterialsContext};
+use crate::material::{Material, MaterialStorage};
 use crate::mesh::Vertex;
 use crate::primitive::Primitive;
-use crate::render::{MeshesContext, PrimitivesContext};
+use crate::render::{MeshStorage, PrimitiveStorage};
 
 pub struct DrawPass {
     pub pipeline: wgpu::RenderPipeline,
@@ -14,9 +14,9 @@ impl DrawPass {
     pub fn new(
         device: &wgpu::Device,
         surface_format: wgpu::TextureFormat,
-        meshes: &MeshesContext,
-        materials: &MaterialsContext,
-        primitives: &PrimitivesContext,
+        meshes: &MeshStorage,
+        materials: &MaterialStorage,
+        primitives: &PrimitiveStorage,
     ) -> Self {
         let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("draw.camera_buffer"),

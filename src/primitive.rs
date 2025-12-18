@@ -7,12 +7,12 @@ pub struct Primitive {
     pub _pad: [u32; 2],
 }
 
-pub struct PrimitivesContext {
+pub struct PrimitiveStorage {
     pub instance_buffer: wgpu::Buffer,
     pub instance_count: u32,
 }
 
-impl PrimitivesContext {
+impl PrimitiveStorage {
     pub fn from_primitives(device: &wgpu::Device, primitives: &[Primitive]) -> Self {
         use wgpu::util::DeviceExt;
 
@@ -22,7 +22,7 @@ impl PrimitivesContext {
             usage: wgpu::BufferUsages::STORAGE,
         });
 
-        PrimitivesContext {
+        PrimitiveStorage {
             instance_buffer,
             instance_count: primitives.len() as u32,
         }

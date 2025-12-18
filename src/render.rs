@@ -4,18 +4,18 @@ mod draw_prepare_pass;
 mod main_cull_pass;
 
 use crate::camera::Camera;
-use crate::material::{Material, MaterialsContext};
-use crate::mesh::{Mesh, MeshesContext};
-use crate::primitive::{Primitive, PrimitivesContext};
+use crate::material::{Material, MaterialStorage};
+use crate::mesh::{Mesh, MeshStorage};
+use crate::primitive::{Primitive, PrimitiveStorage};
 use dispatch_prepare_pass::DispatchPreparePass;
 use draw_pass::DrawPass;
 use draw_prepare_pass::DrawPreparePass;
 use main_cull_pass::MainCullPass;
 
 pub struct RenderContext {
-    pub meshes: MeshesContext,
-    pub materials: MaterialsContext,
-    pub primitives: PrimitivesContext,
+    pub meshes: MeshStorage,
+    pub materials: MaterialStorage,
+    pub primitives: PrimitiveStorage,
     pub main_cull_pass: MainCullPass,
     pub dispatch_prepare_pass: DispatchPreparePass,
     pub draw_prepare_pass: DrawPreparePass,
@@ -29,9 +29,9 @@ impl RenderContext {
         materials: &[Material],
         primitives: &[Primitive],
     ) -> RenderContext {
-        let meshes = MeshesContext::from_meshes(&renderer.device, meshes);
-        let materials = MaterialsContext::from_materials(&renderer.device, materials);
-        let primitives = PrimitivesContext::from_primitives(&renderer.device, primitives);
+        let meshes = MeshStorage::from_meshes(&renderer.device, meshes);
+        let materials = MaterialStorage::from_materials(&renderer.device, materials);
+        let primitives = PrimitiveStorage::from_primitives(&renderer.device, primitives);
         let main_cull_pass = MainCullPass::new(&renderer.device, &meshes, &primitives);
         let dispatch_prepare_pass =
             DispatchPreparePass::new(&renderer.device, main_cull_pass.visible_count_buffer());

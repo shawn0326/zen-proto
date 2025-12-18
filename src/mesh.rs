@@ -11,6 +11,36 @@ pub struct Mesh {
     pub indices: Vec<u16>,
 }
 
+impl Mesh {
+    pub fn bounding_sphere(&self) -> glam::Vec4 {
+        // 空网格：返回半径 0 的球
+        if self.vertices.is_empty() {
+            return glam::Vec4::new(0.0, 0.0, 0.0, 0.0);
+        }
+
+        // 1) 计算质心作为球心（简单且快速）
+        let mut sum = glam::Vec3::new(0.0, 0.0, 0.0);
+        for v in &self.vertices {
+            sum += glam::Vec3::new(v.position.x, v.position.y, v.position.z);
+        }
+        let inv_n = 1.0 / (self.vertices.len() as f32);
+        let center3 = sum * inv_n;
+
+        // 2) 半径为到质心的最大距离
+        let mut max_dsq = 0.0f32;
+        for v in &self.vertices {
+            let p = glam::Vec3::new(v.position.x, v.position.y, v.position.z);
+            let dsq = (p - center3).length_squared();
+            if dsq > max_dsq {
+                max_dsq = dsq;
+            }
+        }
+        let radius = max_dsq.sqrt();
+
+        glam::Vec4::new(center3.x, center3.y, center3.z, radius)
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct MeshTableEntry {
@@ -21,14 +51,14 @@ pub struct MeshTableEntry {
     pub sphere: glam::Vec4, // bounding sphere (xyz: center, w: radius)
 }
 
-pub struct MeshesContext {
+pub struct MeshStorage {
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
     pub mesh_table_buffer: wgpu::Buffer,
     pub mesh_count: u32,
 }
 
-impl MeshesContext {
+impl MeshStorage {
     pub fn from_meshes(device: &wgpu::Device, meshes: &[Mesh]) -> Self {
         use wgpu::util::DeviceExt;
 
@@ -53,7 +83,7 @@ impl MeshesContext {
                 first_index,
                 base_vertex,
                 _pad: 0,
-                sphere: glam::Vec4::new(0.0, 0.0, 0.0, 1.0),
+                sphere: mesh.bounding_sphere(),
             });
         }
 
@@ -75,7 +105,7 @@ impl MeshesContext {
             usage: wgpu::BufferUsages::STORAGE,
         });
 
-        MeshesContext {
+        MeshStorage {
             vertex_buffer,
             index_buffer,
             mesh_table_buffer,

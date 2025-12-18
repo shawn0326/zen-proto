@@ -4,12 +4,12 @@ pub struct Material {
     pub color: glam::Vec4,
 }
 
-pub struct MaterialsContext {
+pub struct MaterialStorage {
     pub material_buffer: wgpu::Buffer,
     pub material_count: u32,
 }
 
-impl MaterialsContext {
+impl MaterialStorage {
     pub fn from_materials(device: &wgpu::Device, materials: &[Material]) -> Self {
         use wgpu::util::DeviceExt;
 
@@ -19,7 +19,7 @@ impl MaterialsContext {
             usage: wgpu::BufferUsages::STORAGE,
         });
 
-        MaterialsContext {
+        MaterialStorage {
             material_buffer,
             material_count: materials.len() as u32,
         }
