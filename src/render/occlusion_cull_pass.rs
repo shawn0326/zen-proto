@@ -3,8 +3,8 @@ use crate::camera::Camera;
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct OcclusionParams {
-    // World -> clip (wgpu depth range 0..1)
-    pub view_proj: glam::Mat4,
+    pub view: glam::Mat4,
+    pub proj: glam::Mat4,
     // x=width, y=height, z=bias, w=slack
     pub screen_bias: [f32; 4],
 }
@@ -20,7 +20,8 @@ impl OcclusionCullPass {
         use wgpu::util::DeviceExt;
 
         let params = OcclusionParams {
-            view_proj: glam::Mat4::IDENTITY,
+            view: glam::Mat4::IDENTITY,
+            proj: glam::Mat4::IDENTITY,
             screen_bias: [1.0, 1.0, 0.0005, 0.01],
         };
 
@@ -43,7 +44,7 @@ impl OcclusionCullPass {
         // 2 mesh_table (ro storage)
         // 3 counters (ro storage)
         // 4 visibility_history (rw storage)
-        // 5 hiz_mip0 (sampled r32float)
+        // 5 hiz (sampled r32float, all mips)
         // 6 params (uniform)
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("occlusion.bgl"),
@@ -153,7 +154,8 @@ impl OcclusionCullPass {
         slack: f32,
     ) {
         let params = OcclusionParams {
-            view_proj: camera.view_projection(),
+            view: camera.view(),
+            proj: camera.projection(),
             screen_bias: [width as f32, height as f32, bias, slack],
         };
         queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
@@ -169,7 +171,7 @@ impl OcclusionCullPass {
         instance_buffer: &wgpu::Buffer,
         mesh_table_buffer: &wgpu::Buffer,
         visibility_history_buffer: &wgpu::Buffer,
-        hiz_mip0_view: &wgpu::TextureView,
+        hiz_view: &wgpu::TextureView,
     ) {
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("occlusion.bind_group"),
@@ -197,7 +199,7 @@ impl OcclusionCullPass {
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: wgpu::BindingResource::TextureView(hiz_mip0_view),
+                    resource: wgpu::BindingResource::TextureView(hiz_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 6,

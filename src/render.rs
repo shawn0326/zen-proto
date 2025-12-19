@@ -21,6 +21,7 @@ pub struct HiZTexture {
     width: u32,
     height: u32,
     mip_level_count: u32,
+    sampled_full_view: wgpu::TextureView,
     sampled_views: Vec<wgpu::TextureView>,
     storage_views: Vec<wgpu::TextureView>,
 }
@@ -49,6 +50,18 @@ impl HiZTexture {
             format: wgpu::TextureFormat::R32Float,
             usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
+        });
+
+        let sampled_full_view = texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("hiz_full_sampled_view"),
+            format: Some(wgpu::TextureFormat::R32Float),
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            aspect: wgpu::TextureAspect::All,
+            base_mip_level: 0,
+            mip_level_count: Some(mip_level_count),
+            base_array_layer: 0,
+            array_layer_count: Some(1),
+            usage: Some(wgpu::TextureUsages::TEXTURE_BINDING),
         });
 
         let mut sampled_views = Vec::with_capacity(mip_level_count as usize);
@@ -84,6 +97,7 @@ impl HiZTexture {
             width,
             height,
             mip_level_count,
+            sampled_full_view,
             sampled_views,
             storage_views,
         }
@@ -103,6 +117,10 @@ impl HiZTexture {
 
     pub fn sampled_view(&self, mip: u32) -> &wgpu::TextureView {
         &self.sampled_views[mip as usize]
+    }
+
+    pub fn sampled_full_view(&self) -> &wgpu::TextureView {
+        &self.sampled_full_view
     }
 
     pub fn storage_view(&self, mip: u32) -> &wgpu::TextureView {
@@ -262,6 +280,7 @@ pub struct DefaultRenderer {
     pub hiz_generate_pass: HiZGeneratePass,
     pub occlusion_cull_pass: OcclusionCullPass,
     pub draw_pass: DrawPass,
+    pub draw_pass_debug: DrawPass,
 }
 
 impl DefaultRenderer {
@@ -301,6 +320,13 @@ impl DefaultRenderer {
             &resources.materials,
             &resources.primitives,
         );
+        let draw_pass_debug = DrawPass::new(
+            &context.device,
+            context.surface_configuration.format,
+            &resources.meshes,
+            &resources.materials,
+            &resources.primitives,
+        );
 
         let hiz_generate_pass = HiZGeneratePass::new(&context.device);
         let occlusion_cull_pass = OcclusionCullPass::new(&context.device);
@@ -314,6 +340,7 @@ impl DefaultRenderer {
             hiz_generate_pass,
             occlusion_cull_pass,
             draw_pass,
+            draw_pass_debug,
         }
     }
 
@@ -346,8 +373,7 @@ impl DefaultRenderer {
         );
 
         let draw_pass = &self.draw_pass;
-        let camera_to_use = debug_camera.as_ref().unwrap_or(&camera);
-        draw_pass.update_camera_buffer(&context.queue, camera_to_use);
+        draw_pass.update_camera_buffer(&context.queue, &camera);
         draw_pass.encode(
             &mut encoder,
             &surface_texture
@@ -395,7 +421,7 @@ impl DefaultRenderer {
                 &camera,
                 context.surface_configuration.width,
                 context.surface_configuration.height,
-                0.000001,
+                0.00001,
                 0.0,
             );
             self.occlusion_cull_pass.encode_indirect(
@@ -407,7 +433,7 @@ impl DefaultRenderer {
                 &self.resources.primitives.instance_buffer,
                 &self.resources.meshes.mesh_table_buffer,
                 main_cull_pass.visibility_history_buffer(),
-                context.hiz_texture.sampled_view(0),
+                context.hiz_texture.sampled_full_view(),
             );
 
             self.draw_prepare_pass_b.encode_indirect(
@@ -454,14 +480,6 @@ impl DefaultRenderer {
 
             // Occlusion cull List B: update visibility_history based on Hi-Z.
             // (History for List A will be handled later.)
-            self.occlusion_cull_pass.update_params(
-                &context.queue,
-                &camera,
-                context.surface_configuration.width,
-                context.surface_configuration.height,
-                -0.01,
-                0.0,
-            );
             self.occlusion_cull_pass.encode_indirect(
                 &context.device,
                 &mut encoder,
@@ -471,7 +489,44 @@ impl DefaultRenderer {
                 &self.resources.primitives.instance_buffer,
                 &self.resources.meshes.mesh_table_buffer,
                 main_cull_pass.visibility_history_buffer(),
-                context.hiz_texture.sampled_view(0),
+                context.hiz_texture.sampled_full_view(),
+            );
+        }
+
+        if let Some(debug_camera) = debug_camera {
+            self.draw_pass_debug
+                .update_camera_buffer(&context.queue, &debug_camera);
+
+            self.draw_pass_debug.encode(
+                &mut encoder,
+                &surface_texture
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default()),
+                &context
+                    .depth_stencil_texture
+                    .create_view(&wgpu::TextureViewDescriptor::default()),
+                &self.resources.meshes.index_buffer,
+                self.draw_prepare_pass_a.indirect_args_buffer(),
+                main_cull_pass.visible_count_buffer_a(),
+                self.resources.primitives.instance_count,
+                true,
+                true,
+            );
+
+            self.draw_pass_debug.encode(
+                &mut encoder,
+                &surface_texture
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default()),
+                &context
+                    .depth_stencil_texture
+                    .create_view(&wgpu::TextureViewDescriptor::default()),
+                &self.resources.meshes.index_buffer,
+                self.draw_prepare_pass_b.indirect_args_buffer(),
+                main_cull_pass.visible_count_buffer_b(),
+                self.resources.primitives.instance_count,
+                false,
+                false,
             );
         }
 

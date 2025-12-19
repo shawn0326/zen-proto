@@ -13,7 +13,7 @@ impl Default for PerspectiveProjection {
         Self {
             fovy_deg: 60.0,
             aspect: 1.0,
-            near: 1.0,
+            near: 0.1,
             far: 1000.0,
         }
     }
