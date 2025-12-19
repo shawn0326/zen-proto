@@ -143,7 +143,7 @@ impl DrawPass {
             }),
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24PlusStencil8,
+                format: wgpu::TextureFormat::Depth32Float,
                 depth_write_enabled: true,
                 depth_compare: wgpu::CompareFunction::Less,
                 stencil: wgpu::StencilState::default(),
@@ -180,9 +180,10 @@ impl DrawPass {
         indirect_buffer: &wgpu::Buffer,
         count_buffer: &wgpu::Buffer,
         max_count: u32,
-        clear: bool,
+        clear_color: bool,
+        clear_depth: bool,
     ) {
-        let color_load = if clear {
+        let color_load = if clear_color {
             wgpu::LoadOp::Clear(wgpu::Color {
                 r: 0.1,
                 g: 0.2,
@@ -192,7 +193,7 @@ impl DrawPass {
         } else {
             wgpu::LoadOp::Load
         };
-        let depth_load = if clear {
+        let depth_load = if clear_depth {
             wgpu::LoadOp::Clear(1.0)
         } else {
             wgpu::LoadOp::Load
