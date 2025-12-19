@@ -3,6 +3,7 @@ mod draw_pass;
 mod draw_prepare_pass;
 mod hiz_generate_pass;
 mod main_cull_pass;
+mod occlusion_cull_pass;
 
 use crate::camera::Camera;
 use crate::material::{Material, MaterialStorage};
@@ -13,6 +14,7 @@ use draw_pass::DrawPass;
 use draw_prepare_pass::DrawPreparePass;
 use hiz_generate_pass::HiZGeneratePass;
 use main_cull_pass::MainCullPass;
+use occlusion_cull_pass::OcclusionCullPass;
 
 pub struct HiZTexture {
     texture: wgpu::Texture,
@@ -258,6 +260,7 @@ pub struct DefaultRenderer {
     pub dispatch_prepare_pass_b: DispatchPreparePass,
     pub draw_prepare_pass_b: DrawPreparePass,
     pub hiz_generate_pass: HiZGeneratePass,
+    pub occlusion_cull_pass: OcclusionCullPass,
     pub draw_pass: DrawPass,
 }
 
@@ -300,6 +303,7 @@ impl DefaultRenderer {
         );
 
         let hiz_generate_pass = HiZGeneratePass::new(&context.device);
+        let occlusion_cull_pass = OcclusionCullPass::new(&context.device);
         Self {
             resources,
             main_cull_pass,
@@ -308,6 +312,7 @@ impl DefaultRenderer {
             dispatch_prepare_pass_b,
             draw_prepare_pass_b,
             hiz_generate_pass,
+            occlusion_cull_pass,
             draw_pass,
         }
     }
@@ -383,6 +388,28 @@ impl DefaultRenderer {
 
             self.dispatch_prepare_pass_b.encode(&mut encoder);
 
+            // Occlusion cull List B: update visibility_history based on Hi-Z.
+            // (History for List A will be handled later.)
+            self.occlusion_cull_pass.update_params(
+                &context.queue,
+                &camera,
+                context.surface_configuration.width,
+                context.surface_configuration.height,
+                0.000001,
+                0.0,
+            );
+            self.occlusion_cull_pass.encode_indirect(
+                &context.device,
+                &mut encoder,
+                self.dispatch_prepare_pass_b.dispatch_args_buffer(),
+                main_cull_pass.visible_instances_buffer_b(),
+                main_cull_pass.visible_count_buffer_b(),
+                &self.resources.primitives.instance_buffer,
+                &self.resources.meshes.mesh_table_buffer,
+                main_cull_pass.visibility_history_buffer(),
+                context.hiz_texture.sampled_view(0),
+            );
+
             self.draw_prepare_pass_b.encode_indirect(
                 &mut encoder,
                 self.dispatch_prepare_pass_b.dispatch_args_buffer(),
@@ -402,6 +429,49 @@ impl DefaultRenderer {
                 self.resources.primitives.instance_count,
                 false,
                 false,
+            );
+
+            let depth_for_hiz_view =
+                context
+                    .depth_stencil_texture
+                    .create_view(&wgpu::TextureViewDescriptor {
+                        label: Some("depth_for_hiz_view"),
+                        format: Some(wgpu::TextureFormat::Depth32Float),
+                        dimension: Some(wgpu::TextureViewDimension::D2),
+                        aspect: wgpu::TextureAspect::DepthOnly,
+                        base_mip_level: 0,
+                        mip_level_count: Some(1),
+                        base_array_layer: 0,
+                        array_layer_count: Some(1),
+                        usage: Some(wgpu::TextureUsages::TEXTURE_BINDING),
+                    });
+            self.hiz_generate_pass.encode(
+                &context.device,
+                &mut encoder,
+                &depth_for_hiz_view,
+                &context.hiz_texture,
+            );
+
+            // Occlusion cull List B: update visibility_history based on Hi-Z.
+            // (History for List A will be handled later.)
+            self.occlusion_cull_pass.update_params(
+                &context.queue,
+                &camera,
+                context.surface_configuration.width,
+                context.surface_configuration.height,
+                -0.01,
+                0.0,
+            );
+            self.occlusion_cull_pass.encode_indirect(
+                &context.device,
+                &mut encoder,
+                self.dispatch_prepare_pass_a.dispatch_args_buffer(),
+                main_cull_pass.visible_instances_buffer_a(),
+                main_cull_pass.visible_count_buffer_a(),
+                &self.resources.primitives.instance_buffer,
+                &self.resources.meshes.mesh_table_buffer,
+                main_cull_pass.visibility_history_buffer(),
+                context.hiz_texture.sampled_view(0),
             );
         }
 

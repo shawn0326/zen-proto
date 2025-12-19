@@ -91,7 +91,7 @@ impl Example for Demo {
         let mut rng = rand::rng();
         for i in 0..primitive_count {
             let translation = rng.random::<glam::Vec3>() * 200. - 100.;
-            let scale = rng.random::<f32>() * 0.8 + 0.5;
+            let scale = rng.random::<f32>() * 1.8 + 0.5;
             let transform = glam::Mat4::from_translation(translation);
             let transform = transform * glam::Mat4::from_scale(glam::vec3(scale, scale, scale));
             primitives.push(Primitive {

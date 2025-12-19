@@ -26,6 +26,13 @@ struct Counters {
     visible_count: atomic<u32>,
 };
 
+struct HistoryVisibility {
+    visible: u32,
+    _pad1: u32,
+    _pad2: u32,
+    _pad3: u32,
+}
+
 @group(0) @binding(0)
 var<storage, read> visible_instances: array<u32>;
 
@@ -42,7 +49,7 @@ var<storage, read> counters: Counters;
 var<storage, read_write> indirect_args: array<DrawIndexedIndirectArgs>;
 
 @group(0) @binding(5)
-var<storage, read> history_visibility: array<u32>;
+var<storage, read> history_visibility: array<HistoryVisibility>;
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -57,7 +64,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let instance_index = visible_instances[index];
 
     // Command culling by history flag.
-    if (history_visibility[instance_index] == 0u) {
+    if (history_visibility[instance_index].visible == 0u) {
         indirect_args[index] = DrawIndexedIndirectArgs(0u, 0u, 0u, 0, 0u);
         return;
     }

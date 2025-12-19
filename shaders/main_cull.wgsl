@@ -29,6 +29,13 @@ struct Counters {
     visible_count: atomic<u32>,
 };
 
+struct HistoryVisibility {
+    visible: u32,
+    _pad1: u32,
+    _pad2: u32,
+    _pad3: u32,
+}
+
 @group(0) @binding(0)
 var<storage, read> instances: array<Instance>;
 
@@ -42,7 +49,7 @@ var<uniform> frustum: Frustum;
 var<uniform> params: Params;
 
 @group(0) @binding(4)
-var<storage, read_write> visibility_history: array<u32>;
+var<storage, read_write> visibility_history: array<HistoryVisibility>;
 
 @group(0) @binding(5)
 var<storage, read_write> counters_a: Counters;
@@ -87,16 +94,20 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     if (visible) {
-        if (params.enable_occlusion == 1u && visibility_history[index] == 0u) {
+        if (params.enable_occlusion == 1u && visibility_history[index].visible == 0u) {
             let dst = atomicAdd(&counters_b.visible_count, 1u);
             visible_instances_b[dst] = index;
         } else {
             let dst = atomicAdd(&counters_a.visible_count, 1u);
             visible_instances_a[dst] = index;
         }
-        
-        visibility_history[index] = 1u;
+
+        // When occlusion is enabled, occlusion passes own the history updates.
+        // When disabled, force everything that passes frustum cull to be visible.
+        if (params.enable_occlusion == 0u) {
+            visibility_history[index].visible = 1u;
+        }
     } else {
-        visibility_history[index] = 0u;
+        visibility_history[index].visible = 0u;
     }
 }
