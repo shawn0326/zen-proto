@@ -11,15 +11,15 @@ use zen_proto::{
     camera::{Camera, PerspectiveProjection},
     material, mesh,
     primitive::Primitive,
-    render::{RenderContext, Renderer},
+    render::{DefaultRenderer, RenderContext},
 };
 
 struct Demo {
-    renderer: Renderer,
+    render_context: RenderContext,
+    renderer: DefaultRenderer,
     camera: Camera,
     debug_camera: Camera,
     camera_controller: OrbitCameraController,
-    render_context: RenderContext,
     use_debug_camera: bool,
 }
 
@@ -27,7 +27,7 @@ impl Example for Demo {
     async fn init(window: Arc<Window>) -> Self {
         let instance = wgpu::Instance::default();
         let surface = instance.create_surface(window).unwrap();
-        let renderer = Renderer::new(&instance, surface).await;
+        let render_context = RenderContext::new(&instance, surface).await;
         let projection = PerspectiveProjection::default();
         let camera = Camera::new(
             glam::Mat4::look_at_rh(
@@ -101,19 +101,19 @@ impl Example for Demo {
             });
         }
 
-        let render_context = RenderContext::new(&renderer, &meshes, &materials, &primitives);
+        let renderer = DefaultRenderer::new(&render_context, &meshes, &materials, &primitives);
         Demo {
+            render_context,
             renderer,
             camera,
             debug_camera,
             camera_controller,
-            render_context,
             use_debug_camera: false,
         }
     }
 
     fn resize(&mut self, width: u32, height: u32) {
-        self.renderer.resize(width, height);
+        self.render_context.resize(width, height);
     }
 
     fn update(&mut self) {}
@@ -125,7 +125,7 @@ impl Example for Demo {
             None
         };
         self.renderer
-            .render(self.camera, debug_camera, &self.render_context);
+            .render(&self.render_context, self.camera, debug_camera);
     }
 
     fn mouse_drag(&mut self, dx: f32, dy: f32) {

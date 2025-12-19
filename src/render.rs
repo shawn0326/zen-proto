@@ -13,55 +13,6 @@ use draw_prepare_pass::DrawPreparePass;
 use main_cull_pass::MainCullPass;
 
 pub struct RenderContext {
-    pub meshes: MeshStorage,
-    pub materials: MaterialStorage,
-    pub primitives: PrimitiveStorage,
-    pub main_cull_pass: MainCullPass,
-    pub dispatch_prepare_pass: DispatchPreparePass,
-    pub draw_prepare_pass: DrawPreparePass,
-    pub draw_pass: DrawPass,
-}
-
-impl RenderContext {
-    pub fn new(
-        renderer: &Renderer,
-        meshes: &[Mesh],
-        materials: &[Material],
-        primitives: &[Primitive],
-    ) -> RenderContext {
-        let meshes = MeshStorage::from_meshes(&renderer.device, meshes);
-        let materials = MaterialStorage::from_materials(&renderer.device, materials);
-        let primitives = PrimitiveStorage::from_primitives(&renderer.device, primitives);
-        let main_cull_pass = MainCullPass::new(&renderer.device, &meshes, &primitives);
-        let dispatch_prepare_pass =
-            DispatchPreparePass::new(&renderer.device, main_cull_pass.visible_count_buffer());
-        let draw_prepare_pass = DrawPreparePass::new(
-            &renderer.device,
-            &meshes,
-            &primitives,
-            main_cull_pass.visible_instances_buffer(),
-            main_cull_pass.visible_count_buffer(),
-        );
-        let draw_pass = DrawPass::new(
-            &renderer.device,
-            renderer.surface_configuration.format,
-            &meshes,
-            &materials,
-            &primitives,
-        );
-        Self {
-            meshes,
-            materials,
-            primitives,
-            main_cull_pass,
-            dispatch_prepare_pass,
-            draw_prepare_pass,
-            draw_pass,
-        }
-    }
-}
-
-pub struct Renderer {
     surface: wgpu::Surface<'static>,
     surface_configuration: wgpu::SurfaceConfiguration,
     depth_stencil_texture: wgpu::Texture,
@@ -69,7 +20,7 @@ pub struct Renderer {
     queue: wgpu::Queue,
 }
 
-impl Renderer {
+impl RenderContext {
     pub async fn new(instance: &wgpu::Instance, surface: wgpu::Surface<'static>) -> Self {
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -122,7 +73,7 @@ impl Renderer {
             view_formats: &[],
         });
 
-        Renderer {
+        Self {
             surface,
             surface_configuration,
             depth_stencil_texture,
@@ -162,55 +113,119 @@ impl Renderer {
             view_formats: &[],
         });
     }
+}
 
-    pub fn render(
-        &mut self,
-        camera: Camera,
-        debug_camera: Option<Camera>,
-        render_context: &RenderContext,
-    ) {
-        let surface_texture = self.surface.get_current_texture().unwrap();
+pub struct RenderResources {
+    pub meshes: MeshStorage,
+    pub materials: MaterialStorage,
+    pub primitives: PrimitiveStorage,
+}
 
-        let mut encoder = self
+impl RenderResources {
+    pub fn new(
+        device: &wgpu::Device,
+        meshes: &[Mesh],
+        materials: &[Material],
+        primitives: &[Primitive],
+    ) -> Self {
+        let meshes = MeshStorage::from_meshes(device, meshes);
+        let materials = MaterialStorage::from_materials(device, materials);
+        let primitives = PrimitiveStorage::from_primitives(device, primitives);
+
+        Self {
+            meshes,
+            materials,
+            primitives,
+        }
+    }
+}
+
+pub struct DefaultRenderer {
+    pub resources: RenderResources,
+    pub main_cull_pass: MainCullPass,
+    pub dispatch_prepare_pass: DispatchPreparePass,
+    pub draw_prepare_pass: DrawPreparePass,
+    pub draw_pass: DrawPass,
+}
+
+impl DefaultRenderer {
+    pub fn new(
+        context: &RenderContext,
+        meshes: &[Mesh],
+        materials: &[Material],
+        primitives: &[Primitive],
+    ) -> DefaultRenderer {
+        let resources = RenderResources::new(&context.device, meshes, materials, primitives);
+        let main_cull_pass =
+            MainCullPass::new(&context.device, &resources.meshes, &resources.primitives);
+        let dispatch_prepare_pass =
+            DispatchPreparePass::new(&context.device, main_cull_pass.visible_count_buffer());
+        let draw_prepare_pass = DrawPreparePass::new(
+            &context.device,
+            &resources.meshes,
+            &resources.primitives,
+            main_cull_pass.visible_instances_buffer(),
+            main_cull_pass.visible_count_buffer(),
+        );
+        let draw_pass = DrawPass::new(
+            &context.device,
+            context.surface_configuration.format,
+            &resources.meshes,
+            &resources.materials,
+            &resources.primitives,
+        );
+        Self {
+            resources,
+            main_cull_pass,
+            dispatch_prepare_pass,
+            draw_prepare_pass,
+            draw_pass,
+        }
+    }
+
+    pub fn render(&self, context: &RenderContext, camera: Camera, debug_camera: Option<Camera>) {
+        let surface_texture = context.surface.get_current_texture().unwrap();
+
+        let mut encoder = context
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder"),
             });
 
         // Step 1: 视锥裁剪
-        let main_cull_pass = &render_context.main_cull_pass;
-        main_cull_pass.update_frustum(&self.queue, &camera);
-        main_cull_pass.reset_visible_count(&self.queue);
-        main_cull_pass.encode(&mut encoder, render_context.primitives.instance_count);
+        let main_cull_pass = &self.main_cull_pass;
+        main_cull_pass.update_frustum(&context.queue, &camera);
+        main_cull_pass.reset_visible_count(&context.queue);
+        main_cull_pass.encode(&mut encoder, self.resources.primitives.instance_count);
 
         // Step 2: 准备 Dispatch 参数
-        render_context.dispatch_prepare_pass.encode(&mut encoder);
+        self.dispatch_prepare_pass.encode(&mut encoder);
 
         // Step 3: 准备 DrawIndirect 参数
-        render_context.draw_prepare_pass.encode_indirect(
+        self.draw_prepare_pass.encode_indirect(
             &mut encoder,
-            render_context.dispatch_prepare_pass.dispatch_args_buffer(),
+            self.dispatch_prepare_pass.dispatch_args_buffer(),
         );
 
         // Step 4: 绘制
-        let draw_pass = &render_context.draw_pass;
+        let draw_pass = &self.draw_pass;
         let camera_to_use = debug_camera.as_ref().unwrap_or(&camera);
-        draw_pass.update_camera_buffer(&self.queue, camera_to_use);
+        draw_pass.update_camera_buffer(&context.queue, camera_to_use);
         draw_pass.encode(
             &mut encoder,
             &surface_texture
                 .texture
                 .create_view(&wgpu::TextureViewDescriptor::default()),
-            &self
+            &context
                 .depth_stencil_texture
                 .create_view(&wgpu::TextureViewDescriptor::default()),
-            &render_context.meshes.index_buffer,
-            render_context.draw_prepare_pass.indirect_args_buffer(),
+            &self.resources.meshes.index_buffer,
+            self.draw_prepare_pass.indirect_args_buffer(),
             main_cull_pass.visible_count_buffer(),
-            render_context.primitives.instance_count,
+            self.resources.primitives.instance_count,
         );
 
-        self.queue.submit(Some(encoder.finish()));
+        context.queue.submit(Some(encoder.finish()));
 
         surface_texture.present();
     }
