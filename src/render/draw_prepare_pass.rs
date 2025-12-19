@@ -23,6 +23,7 @@ impl DrawPreparePass {
         primitives: &PrimitiveStorage,
         visible_instances_buffer: &wgpu::Buffer,
         visible_count_buffer: &wgpu::Buffer,
+        history_visibility_buffer: &wgpu::Buffer,
     ) -> Self {
         let instance_count = primitives.instance_count;
 
@@ -48,6 +49,7 @@ impl DrawPreparePass {
         // 2 mesh_table (ro storage)
         // 3 counters (ro storage)
         // 4 indirect_args (rw storage)
+        // 5 history_visibility (ro storage)
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("cull.draw_prepare_bgl"),
             entries: &[
@@ -101,6 +103,16 @@ impl DrawPreparePass {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -142,6 +154,10 @@ impl DrawPreparePass {
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: indirect_args_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: history_visibility_buffer.as_entire_binding(),
                 },
             ],
         });

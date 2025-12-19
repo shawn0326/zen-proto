@@ -163,5 +163,5 @@ impl Example for Demo {
 }
 
 fn main() {
-    run::<Demo>(None);
+    run::<Demo>(Some(120));
 }

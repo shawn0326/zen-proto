@@ -41,6 +41,9 @@ var<storage, read> counters: Counters;
 @group(0) @binding(4)
 var<storage, read_write> indirect_args: array<DrawIndexedIndirectArgs>;
 
+@group(0) @binding(5)
+var<storage, read> history_visibility: array<u32>;
+
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let index = gid.x;
@@ -52,6 +55,13 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     
     let instance_index = visible_instances[index];
+
+    // Command culling by history flag.
+    if (history_visibility[instance_index] == 0u) {
+        indirect_args[index] = DrawIndexedIndirectArgs(0u, 0u, 0u, 0, 0u);
+        return;
+    }
+
     let inst = instances[instance_index];
     let mesh = mesh_table[inst.mesh_id];
 

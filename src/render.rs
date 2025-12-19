@@ -279,6 +279,7 @@ impl DefaultRenderer {
             &resources.primitives,
             main_cull_pass.visible_instances_buffer_a(),
             main_cull_pass.visible_count_buffer_a(),
+            main_cull_pass.visibility_history_buffer(),
         );
         let dispatch_prepare_pass_b =
             DispatchPreparePass::new(&context.device, main_cull_pass.visible_count_buffer_b());
@@ -288,6 +289,7 @@ impl DefaultRenderer {
             &resources.primitives,
             main_cull_pass.visible_instances_buffer_b(),
             main_cull_pass.visible_count_buffer_b(),
+            main_cull_pass.visibility_history_buffer(),
         );
         let draw_pass = DrawPass::new(
             &context.device,
