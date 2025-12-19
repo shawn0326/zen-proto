@@ -21,7 +21,7 @@ struct Frustum {
 struct Params {
     instance_count: u32,
     mesh_count: u32,
-    _pad0: u32,
+    enable_occlusion: u32,
     _pad1: u32,
 };
 
@@ -41,13 +41,20 @@ var<uniform> frustum: Frustum;
 @group(0) @binding(3)
 var<uniform> params: Params;
 
-// 共用 Counter Buffer
 @group(0) @binding(4)
-var<storage, read_write> counters: Counters;
+var<storage, read_write> visibility_history: array<u32>;
 
-// 输出：紧凑的可见实例索引列表
 @group(0) @binding(5)
-var<storage, read_write> visible_instances: array<u32>;
+var<storage, read_write> counters_a: Counters;
+
+@group(0) @binding(6)
+var<storage, read_write> visible_instances_a: array<u32>;
+
+@group(0) @binding(7)
+var<storage, read_write> counters_b: Counters;
+
+@group(0) @binding(8)
+var<storage, read_write> visible_instances_b: array<u32>;
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -80,7 +87,16 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     if (visible) {
-        let dst = atomicAdd(&counters.visible_count, 1u);
-        visible_instances[dst] = index;
+        if (params.enable_occlusion == 1u && visibility_history[index] == 0u) {
+            let dst = atomicAdd(&counters_b.visible_count, 1u);
+            visible_instances_b[dst] = index;
+        } else {
+            let dst = atomicAdd(&counters_a.visible_count, 1u);
+            visible_instances_a[dst] = index;
+        }
+        
+        visibility_history[index] = 1u;
+    } else {
+        visibility_history[index] = 0u;
     }
 }

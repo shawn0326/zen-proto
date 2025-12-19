@@ -15,7 +15,7 @@ pub struct FrustumUniform {
 pub struct CullParams {
     pub instance_count: u32,
     pub mesh_count: u32,
-    pub _pad0: u32,
+    pub enable_occlusion: u32,
     pub _pad1: u32,
 }
 
@@ -26,8 +26,13 @@ pub struct MainCullPass {
     frustum_buffer: wgpu::Buffer,
     _params_buffer: wgpu::Buffer,
 
-    visible_count_buffer: wgpu::Buffer,
-    visible_instances_buffer: wgpu::Buffer,
+    visibility_history_buffer: wgpu::Buffer,
+
+    visible_count_buffer_a: wgpu::Buffer,
+    visible_instances_buffer_a: wgpu::Buffer,
+
+    visible_count_buffer_b: wgpu::Buffer,
+    visible_instances_buffer_b: wgpu::Buffer,
 }
 
 impl MainCullPass {
@@ -46,7 +51,7 @@ impl MainCullPass {
         let params = CullParams {
             instance_count,
             mesh_count: meshes.mesh_count,
-            _pad0: 0,
+            enable_occlusion: 1,
             _pad1: 0,
         };
         let params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -55,8 +60,15 @@ impl MainCullPass {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let visible_count_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("cull.visible_count_buffer"),
+        let visibility_history_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("cull.visibility_history_buffer"),
+            size: instance_count as u64 * 4,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let visible_count_buffer_a = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("cull.visible_count_buffer_a"),
             size: 4,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::INDIRECT
@@ -65,8 +77,25 @@ impl MainCullPass {
             mapped_at_creation: false,
         });
 
-        let visible_instances_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("cull.visible_instances_buffer"),
+        let visible_instances_buffer_a = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("cull.visible_instances_buffer_a"),
+            size: instance_count as u64 * 4,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let visible_count_buffer_b = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("cull.visible_count_buffer_b"),
+            size: 4,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::INDIRECT
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let visible_instances_buffer_b = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("cull.visible_instances_buffer_b"),
             size: instance_count as u64 * 4,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
@@ -147,6 +176,36 @@ impl MainCullPass {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 8,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -187,11 +246,23 @@ impl MainCullPass {
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
-                    resource: visible_count_buffer.as_entire_binding(),
+                    resource: visibility_history_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: visible_instances_buffer.as_entire_binding(),
+                    resource: visible_count_buffer_a.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: visible_instances_buffer_a.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: visible_count_buffer_b.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: visible_instances_buffer_b.as_entire_binding(),
                 },
             ],
         });
@@ -201,8 +272,11 @@ impl MainCullPass {
             bind_group,
             frustum_buffer,
             _params_buffer: params_buffer,
-            visible_count_buffer,
-            visible_instances_buffer,
+            visibility_history_buffer,
+            visible_count_buffer_a,
+            visible_instances_buffer_a,
+            visible_count_buffer_b,
+            visible_instances_buffer_b,
         }
     }
 
@@ -216,7 +290,13 @@ impl MainCullPass {
 
     pub fn reset_visible_count(&self, queue: &wgpu::Queue) {
         let zero4 = [0u8; 4];
-        queue.write_buffer(&self.visible_count_buffer, 0, &zero4);
+        queue.write_buffer(&self.visible_count_buffer_a, 0, &zero4);
+        queue.write_buffer(&self.visible_count_buffer_b, 0, &zero4);
+    }
+
+    pub fn enable_occlusion_culling(&self, queue: &wgpu::Queue, enable: bool) {
+        let flag: u32 = if enable { 1 } else { 0 };
+        queue.write_buffer(&self._params_buffer, 8, bytemuck::bytes_of(&flag));
     }
 
     pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, instance_count: u32) {
@@ -232,11 +312,23 @@ impl MainCullPass {
         pass.dispatch_workgroups(group_count, 1, 1);
     }
 
-    pub fn visible_count_buffer(&self) -> &wgpu::Buffer {
-        &self.visible_count_buffer
+    pub fn visibility_history_buffer(&self) -> &wgpu::Buffer {
+        &self.visibility_history_buffer
     }
 
-    pub fn visible_instances_buffer(&self) -> &wgpu::Buffer {
-        &self.visible_instances_buffer
+    pub fn visible_count_buffer_a(&self) -> &wgpu::Buffer {
+        &self.visible_count_buffer_a
+    }
+
+    pub fn visible_instances_buffer_a(&self) -> &wgpu::Buffer {
+        &self.visible_instances_buffer_a
+    }
+
+    pub fn visible_count_buffer_b(&self) -> &wgpu::Buffer {
+        &self.visible_count_buffer_b
+    }
+
+    pub fn visible_instances_buffer_b(&self) -> &wgpu::Buffer {
+        &self.visible_instances_buffer_b
     }
 }

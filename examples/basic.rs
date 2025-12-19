@@ -21,6 +21,7 @@ struct Demo {
     debug_camera: Camera,
     camera_controller: OrbitCameraController,
     use_debug_camera: bool,
+    enable_occlusion_culling: bool,
 }
 
 impl Example for Demo {
@@ -109,6 +110,7 @@ impl Example for Demo {
             debug_camera,
             camera_controller,
             use_debug_camera: false,
+            enable_occlusion_culling: true,
         }
     }
 
@@ -124,8 +126,12 @@ impl Example for Demo {
         } else {
             None
         };
-        self.renderer
-            .render(&self.render_context, self.camera, debug_camera);
+        self.renderer.render(
+            &self.render_context,
+            self.camera,
+            debug_camera,
+            self.enable_occlusion_culling,
+        );
     }
 
     fn mouse_drag(&mut self, dx: f32, dy: f32) {
@@ -144,6 +150,14 @@ impl Example for Demo {
         {
             self.use_debug_camera = !self.use_debug_camera;
             println!("Use debug camera: {}", self.use_debug_camera);
+        } else if key_event.physical_key == winit::keyboard::KeyCode::KeyO
+            && key_event.state == winit::event::ElementState::Pressed
+        {
+            self.enable_occlusion_culling = !self.enable_occlusion_culling;
+            println!(
+                "Enable occlusion culling: {}",
+                self.enable_occlusion_culling
+            );
         }
     }
 }

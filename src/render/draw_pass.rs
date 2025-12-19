@@ -180,7 +180,24 @@ impl DrawPass {
         indirect_buffer: &wgpu::Buffer,
         count_buffer: &wgpu::Buffer,
         max_count: u32,
+        clear: bool,
     ) {
+        let color_load = if clear {
+            wgpu::LoadOp::Clear(wgpu::Color {
+                r: 0.1,
+                g: 0.2,
+                b: 0.3,
+                a: 1.0,
+            })
+        } else {
+            wgpu::LoadOp::Load
+        };
+        let depth_load = if clear {
+            wgpu::LoadOp::Clear(1.0)
+        } else {
+            wgpu::LoadOp::Load
+        };
+
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("DrawPass RenderPass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -188,19 +205,14 @@ impl DrawPass {
                 resolve_target: None,
                 depth_slice: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.1,
-                        g: 0.2,
-                        b: 0.3,
-                        a: 1.0,
-                    }),
+                    load: color_load,
                     store: wgpu::StoreOp::Store,
                 },
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: depth_view,
                 depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
+                    load: depth_load,
                     store: wgpu::StoreOp::Store,
                 }),
                 stencil_ops: None,

@@ -143,8 +143,10 @@ impl RenderResources {
 pub struct DefaultRenderer {
     pub resources: RenderResources,
     pub main_cull_pass: MainCullPass,
-    pub dispatch_prepare_pass: DispatchPreparePass,
-    pub draw_prepare_pass: DrawPreparePass,
+    pub dispatch_prepare_pass_a: DispatchPreparePass,
+    pub draw_prepare_pass_a: DrawPreparePass,
+    pub dispatch_prepare_pass_b: DispatchPreparePass,
+    pub draw_prepare_pass_b: DrawPreparePass,
     pub draw_pass: DrawPass,
 }
 
@@ -158,14 +160,23 @@ impl DefaultRenderer {
         let resources = RenderResources::new(&context.device, meshes, materials, primitives);
         let main_cull_pass =
             MainCullPass::new(&context.device, &resources.meshes, &resources.primitives);
-        let dispatch_prepare_pass =
-            DispatchPreparePass::new(&context.device, main_cull_pass.visible_count_buffer());
-        let draw_prepare_pass = DrawPreparePass::new(
+        let dispatch_prepare_pass_a =
+            DispatchPreparePass::new(&context.device, main_cull_pass.visible_count_buffer_a());
+        let draw_prepare_pass_a = DrawPreparePass::new(
             &context.device,
             &resources.meshes,
             &resources.primitives,
-            main_cull_pass.visible_instances_buffer(),
-            main_cull_pass.visible_count_buffer(),
+            main_cull_pass.visible_instances_buffer_a(),
+            main_cull_pass.visible_count_buffer_a(),
+        );
+        let dispatch_prepare_pass_b =
+            DispatchPreparePass::new(&context.device, main_cull_pass.visible_count_buffer_b());
+        let draw_prepare_pass_b = DrawPreparePass::new(
+            &context.device,
+            &resources.meshes,
+            &resources.primitives,
+            main_cull_pass.visible_instances_buffer_b(),
+            main_cull_pass.visible_count_buffer_b(),
         );
         let draw_pass = DrawPass::new(
             &context.device,
@@ -177,13 +188,21 @@ impl DefaultRenderer {
         Self {
             resources,
             main_cull_pass,
-            dispatch_prepare_pass,
-            draw_prepare_pass,
+            dispatch_prepare_pass_a,
+            draw_prepare_pass_a,
+            dispatch_prepare_pass_b,
+            draw_prepare_pass_b,
             draw_pass,
         }
     }
 
-    pub fn render(&self, context: &RenderContext, camera: Camera, debug_camera: Option<Camera>) {
+    pub fn render(
+        &self,
+        context: &RenderContext,
+        camera: Camera,
+        debug_camera: Option<Camera>,
+        enable_occlusion_culling: bool,
+    ) {
         let surface_texture = context.surface.get_current_texture().unwrap();
 
         let mut encoder = context
@@ -192,22 +211,19 @@ impl DefaultRenderer {
                 label: Some("Render Encoder"),
             });
 
-        // Step 1: 视锥裁剪
         let main_cull_pass = &self.main_cull_pass;
         main_cull_pass.update_frustum(&context.queue, &camera);
         main_cull_pass.reset_visible_count(&context.queue);
+        main_cull_pass.enable_occlusion_culling(&context.queue, enable_occlusion_culling);
         main_cull_pass.encode(&mut encoder, self.resources.primitives.instance_count);
 
-        // Step 2: 准备 Dispatch 参数
-        self.dispatch_prepare_pass.encode(&mut encoder);
+        self.dispatch_prepare_pass_a.encode(&mut encoder);
 
-        // Step 3: 准备 DrawIndirect 参数
-        self.draw_prepare_pass.encode_indirect(
+        self.draw_prepare_pass_a.encode_indirect(
             &mut encoder,
-            self.dispatch_prepare_pass.dispatch_args_buffer(),
+            self.dispatch_prepare_pass_a.dispatch_args_buffer(),
         );
 
-        // Step 4: 绘制
         let draw_pass = &self.draw_pass;
         let camera_to_use = debug_camera.as_ref().unwrap_or(&camera);
         draw_pass.update_camera_buffer(&context.queue, camera_to_use);
@@ -220,10 +236,35 @@ impl DefaultRenderer {
                 .depth_stencil_texture
                 .create_view(&wgpu::TextureViewDescriptor::default()),
             &self.resources.meshes.index_buffer,
-            self.draw_prepare_pass.indirect_args_buffer(),
-            main_cull_pass.visible_count_buffer(),
+            self.draw_prepare_pass_a.indirect_args_buffer(),
+            main_cull_pass.visible_count_buffer_a(),
             self.resources.primitives.instance_count,
+            true,
         );
+
+        if enable_occlusion_culling {
+            self.dispatch_prepare_pass_b.encode(&mut encoder);
+
+            self.draw_prepare_pass_b.encode_indirect(
+                &mut encoder,
+                self.dispatch_prepare_pass_b.dispatch_args_buffer(),
+            );
+
+            draw_pass.encode(
+                &mut encoder,
+                &surface_texture
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default()),
+                &context
+                    .depth_stencil_texture
+                    .create_view(&wgpu::TextureViewDescriptor::default()),
+                &self.resources.meshes.index_buffer,
+                self.draw_prepare_pass_b.indirect_args_buffer(),
+                main_cull_pass.visible_count_buffer_b(),
+                self.resources.primitives.instance_count,
+                false,
+            );
+        }
 
         context.queue.submit(Some(encoder.finish()));
 
