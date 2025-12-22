@@ -380,6 +380,7 @@ impl DefaultRenderer {
 
             self.dispatch_prepare_pass_a.encode(&mut scope);
 
+            self.draw_prepare_pass_a.reset_draw_count(&context.queue);
             self.draw_prepare_pass_a.encode_indirect(
                 &mut scope,
                 self.dispatch_prepare_pass_a.dispatch_args_buffer(),
@@ -397,7 +398,7 @@ impl DefaultRenderer {
                     .create_view(&wgpu::TextureViewDescriptor::default()),
                 &self.resources.meshes.index_buffer,
                 self.draw_prepare_pass_a.indirect_args_buffer(),
-                main_cull_pass.visible_count_buffer_a(),
+                self.draw_prepare_pass_a.draw_count_buffer(),
                 self.resources.primitives.instance_count,
                 true,
                 true,
@@ -438,7 +439,7 @@ impl DefaultRenderer {
                     &camera,
                     context.surface_configuration.width,
                     context.surface_configuration.height,
-                    0.00001,
+                    0.0001,
                     0.0,
                 );
                 self.occlusion_cull_pass.encode_indirect(
@@ -453,6 +454,7 @@ impl DefaultRenderer {
                     context.hiz_texture.sampled_full_view(),
                 );
 
+                self.draw_prepare_pass_b.reset_draw_count(&context.queue);
                 self.draw_prepare_pass_b.encode_indirect(
                     &mut scope,
                     self.dispatch_prepare_pass_b.dispatch_args_buffer(),
@@ -468,7 +470,7 @@ impl DefaultRenderer {
                         .create_view(&wgpu::TextureViewDescriptor::default()),
                     &self.resources.meshes.index_buffer,
                     self.draw_prepare_pass_b.indirect_args_buffer(),
-                    main_cull_pass.visible_count_buffer_b(),
+                    self.draw_prepare_pass_b.draw_count_buffer(),
                     self.resources.primitives.instance_count,
                     false,
                     false,
@@ -506,7 +508,7 @@ impl DefaultRenderer {
                         .create_view(&wgpu::TextureViewDescriptor::default()),
                     &self.resources.meshes.index_buffer,
                     self.draw_prepare_pass_a.indirect_args_buffer(),
-                    main_cull_pass.visible_count_buffer_a(),
+                    self.draw_prepare_pass_a.draw_count_buffer(),
                     self.resources.primitives.instance_count,
                     true,
                     true,
@@ -522,7 +524,7 @@ impl DefaultRenderer {
                         .create_view(&wgpu::TextureViewDescriptor::default()),
                     &self.resources.meshes.index_buffer,
                     self.draw_prepare_pass_b.indirect_args_buffer(),
-                    main_cull_pass.visible_count_buffer_b(),
+                    self.draw_prepare_pass_b.draw_count_buffer(),
                     self.resources.primitives.instance_count,
                     false,
                     false,

@@ -14,6 +14,7 @@ pub struct DrawPreparePass {
     pipeline: wgpu::ComputePipeline,
     bind_group: wgpu::BindGroup,
     indirect_args_buffer: wgpu::Buffer,
+    draw_count_buffer: wgpu::Buffer,
 }
 
 impl DrawPreparePass {
@@ -36,6 +37,18 @@ impl DrawPreparePass {
             mapped_at_creation: false,
         });
 
+        // Stores the actual number of draw commands produced by draw_prepare.wgsl.
+        // Used by multi_draw_indexed_indirect_count so we don't issue lots of 0-instance draws.
+        let draw_count_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("cull.draw_count_buffer"),
+            size: 4,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::INDIRECT
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("draw_prepare.wgsl"),
             source: wgpu::ShaderSource::Wgsl(
@@ -50,6 +63,7 @@ impl DrawPreparePass {
         // 3 counters (ro storage)
         // 4 indirect_args (rw storage)
         // 5 history_visibility (ro storage)
+        // 6 draw_count (rw storage)
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("cull.draw_prepare_bgl"),
             entries: &[
@@ -113,6 +127,16 @@ impl DrawPreparePass {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -159,6 +183,10 @@ impl DrawPreparePass {
                     binding: 5,
                     resource: history_visibility_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: draw_count_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -166,7 +194,12 @@ impl DrawPreparePass {
             pipeline,
             bind_group,
             indirect_args_buffer,
+            draw_count_buffer,
         }
+    }
+
+    pub fn reset_draw_count(&self, queue: &wgpu::Queue) {
+        queue.write_buffer(&self.draw_count_buffer, 0, bytemuck::bytes_of(&0u32));
     }
 
     pub fn encode_indirect(
@@ -182,5 +215,9 @@ impl DrawPreparePass {
 
     pub fn indirect_args_buffer(&self) -> &wgpu::Buffer {
         &self.indirect_args_buffer
+    }
+
+    pub fn draw_count_buffer(&self) -> &wgpu::Buffer {
+        &self.draw_count_buffer
     }
 }

@@ -26,6 +26,10 @@ struct Counters {
     visible_count: atomic<u32>,
 };
 
+struct DrawCount {
+    draw_count: atomic<u32>,
+};
+
 struct HistoryVisibility {
     visible: u32,
 }
@@ -48,6 +52,9 @@ var<storage, read_write> indirect_args: array<DrawIndexedIndirectArgs>;
 @group(0) @binding(5)
 var<storage, read> history_visibility: array<HistoryVisibility>;
 
+@group(0) @binding(6)
+var<storage, read_write> draw_count: DrawCount;
+
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let index = gid.x;
@@ -62,14 +69,15 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     // Command culling by history flag.
     if (history_visibility[instance_index].visible == 0u) {
-        indirect_args[index] = DrawIndexedIndirectArgs(0u, 0u, 0u, 0, 0u);
         return;
     }
 
     let inst = instances[instance_index];
     let mesh = mesh_table[inst.mesh_id];
 
-    indirect_args[index] = DrawIndexedIndirectArgs(
+    // Compaction: append only visible draw commands.
+    let dst = atomicAdd(&draw_count.draw_count, 1u);
+    indirect_args[dst] = DrawIndexedIndirectArgs(
         mesh.index_count,
         1u,
         mesh.first_index,

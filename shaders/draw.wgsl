@@ -58,6 +58,6 @@ fn vs_main(
 fn fs_main(in: VsOut) -> @location(0) vec4f {
     let light_dir = normalize(vec3f(0.5, 1.0, 0.8));
     let n_dot_l = max(dot(in.normal, light_dir), 0.0);
-    let diffuse = 0.2 + 0.8 * n_dot_l; // 环境光+漫反射
+    let diffuse = 0.1 + 0.9 * n_dot_l; // 环境光+漫反射
     return in.color * diffuse;
 }
