@@ -171,13 +171,10 @@ impl DrawPreparePass {
 
     pub fn encode_indirect(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut wgpu_profiler::Scope<wgpu::CommandEncoder>,
         dispatch_args_buffer: &wgpu::Buffer,
     ) {
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("DrawPrepare Pass"),
-            timestamp_writes: None,
-        });
+        let mut pass = encoder.scoped_compute_pass("DrawPrepare Pass");
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.dispatch_workgroups_indirect(dispatch_args_buffer, 0);

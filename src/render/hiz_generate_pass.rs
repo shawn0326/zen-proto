@@ -5,6 +5,14 @@ pub struct HiZGeneratePass {
     depth_to_mip0_bgl: wgpu::BindGroupLayout,
     mip_to_mip_pipeline: wgpu::ComputePipeline,
     mip_to_mip_bgl: wgpu::BindGroupLayout,
+
+    // Cached bind groups (rebuild on resize / texture recreation)
+    depth_to_mip0_bg: Option<wgpu::BindGroup>,
+    mip_to_mip_bgs: Vec<wgpu::BindGroup>,
+    cached_mip_levels: u32,
+
+    cached_width: u32,
+    cached_height: u32,
 }
 
 impl HiZGeneratePass {
@@ -120,27 +128,37 @@ impl HiZGeneratePass {
             depth_to_mip0_bgl,
             mip_to_mip_pipeline,
             mip_to_mip_bgl,
+
+            // Cached bind groups (rebuild on resize / texture recreation)
+            depth_to_mip0_bg: None,
+            mip_to_mip_bgs: Vec::new(),
+            cached_mip_levels: 0,
+
+            cached_width: 0,
+            cached_height: 0,
         }
     }
 
-    pub fn encode(
-        &self,
+    fn ceil_div(a: u32, b: u32) -> u32 {
+        (a + b - 1) / b
+    }
+
+    fn mip_dim(mut base: u32, level: u32) -> u32 {
+        base >>= level;
+        base.max(1)
+    }
+
+    /// Call this after:
+    /// - depth texture view changed (resize / recreated)
+    /// - HiZ texture recreated (resize)
+    pub fn rebuild_bind_groups(
+        &mut self,
         device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
         depth_view: &wgpu::TextureView,
         hiz: &HiZTexture,
     ) {
-        fn ceil_div(a: u32, b: u32) -> u32 {
-            (a + b - 1) / b
-        }
-
-        fn mip_dim(mut base: u32, level: u32) -> u32 {
-            base = base >> level;
-            base.max(1)
-        }
-
-        // Pass 1: depth -> HiZ mip0
-        let bg0 = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        // depth -> mip0
+        self.depth_to_mip0_bg = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("hiz.depth_to_mip0_bg"),
             layout: &self.depth_to_mip0_bgl,
             entries: &[
@@ -153,49 +171,91 @@ impl HiZGeneratePass {
                     resource: wgpu::BindingResource::TextureView(hiz.storage_view(0)),
                 },
             ],
-        });
+        }));
 
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("HiZ: depth_to_mip0"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.depth_to_mip0_pipeline);
-            pass.set_bind_group(0, &bg0, &[]);
-            pass.dispatch_workgroups(ceil_div(hiz.width(), 8), ceil_div(hiz.height(), 8), 1);
-        }
-
-        // Pass 2: mip pyramid (HiZ mip N-1 -> mip N)
+        // mip(n-1) -> mip(n)
+        self.mip_to_mip_bgs.clear();
         let mip_levels = hiz.mip_level_count();
+        self.mip_to_mip_bgs
+            .reserve((mip_levels.saturating_sub(1)) as usize);
+
         for mip in 1..mip_levels {
             let src_view = hiz.sampled_view(mip - 1);
             let dst_view = hiz.storage_view(mip);
 
-            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("hiz.mip_to_mip_bg"),
-                layout: &self.mip_to_mip_bgl,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(src_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(dst_view),
-                    },
-                ],
-            });
+            self.mip_to_mip_bgs
+                .push(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("hiz.mip_to_mip_bg"),
+                    layout: &self.mip_to_mip_bgl,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(src_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(dst_view),
+                        },
+                    ],
+                }));
+        }
 
-            let dst_w = mip_dim(hiz.width(), mip);
-            let dst_h = mip_dim(hiz.height(), mip);
+        self.cached_mip_levels = mip_levels;
+        self.cached_width = hiz.width();
+        self.cached_height = hiz.height();
+    }
 
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("HiZ: mip_to_mip"),
-                timestamp_writes: None,
-            });
+    pub fn mip_level_count(&self) -> u32 {
+        self.cached_mip_levels
+    }
+
+    pub fn needs_rebuild(&self, hiz: &HiZTexture) -> bool {
+        self.depth_to_mip0_bg.is_none()
+            || self.cached_mip_levels != hiz.mip_level_count()
+            || self.cached_width != hiz.width()
+            || self.cached_height != hiz.height()
+    }
+
+    pub fn encode(
+        &self,
+        encoder: &mut wgpu_profiler::Scope<wgpu::CommandEncoder>,
+        hiz: &HiZTexture,
+    ) {
+        // 保险：如果没 rebuild 或缓存不匹配，直接放弃
+        if self.depth_to_mip0_bg.is_none()
+            || self.cached_mip_levels != hiz.mip_level_count()
+            || self.cached_width != hiz.width()
+            || self.cached_height != hiz.height()
+        {
+            return;
+        }
+
+        // Pass 1: depth -> HiZ mip0
+        {
+            let bg0 = self.depth_to_mip0_bg.as_ref().unwrap();
+            let mut pass = encoder.scoped_compute_pass("HiZ: depth_to_mip0");
+            pass.set_pipeline(&self.depth_to_mip0_pipeline);
+            pass.set_bind_group(0, bg0, &[]);
+            pass.dispatch_workgroups(
+                Self::ceil_div(hiz.width(), 8),
+                Self::ceil_div(hiz.height(), 8),
+                1,
+            );
+        }
+
+        // Pass 2: mip pyramid
+        // NOTE: 这里仍按 mip 分 pass，避免潜在的跨-dispatch 读写 hazard。
+        let mip_levels = hiz.mip_level_count();
+        for mip in 1..mip_levels {
+            let dst_w = Self::mip_dim(hiz.width(), mip);
+            let dst_h = Self::mip_dim(hiz.height(), mip);
+
+            let bg = &self.mip_to_mip_bgs[(mip - 1) as usize];
+
+            let mut pass = encoder.scoped_compute_pass("HiZ: mip_to_mip");
             pass.set_pipeline(&self.mip_to_mip_pipeline);
-            pass.set_bind_group(0, &bg, &[]);
-            pass.dispatch_workgroups(ceil_div(dst_w, 8), ceil_div(dst_h, 8), 1);
+            pass.set_bind_group(0, bg, &[]);
+            pass.dispatch_workgroups(Self::ceil_div(dst_w, 8), Self::ceil_div(dst_h, 8), 1);
         }
     }
 }

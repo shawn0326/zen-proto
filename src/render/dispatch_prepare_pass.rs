@@ -88,11 +88,8 @@ impl DispatchPreparePass {
         }
     }
 
-    pub fn encode(&self, encoder: &mut wgpu::CommandEncoder) {
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("DispatchPrepare Pass"),
-            timestamp_writes: None,
-        });
+    pub fn encode(&self, encoder: &mut wgpu_profiler::Scope<wgpu::CommandEncoder>) {
+        let mut pass = encoder.scoped_compute_pass("DispatchPrepare Pass");
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.dispatch_workgroups(1, 1, 1);

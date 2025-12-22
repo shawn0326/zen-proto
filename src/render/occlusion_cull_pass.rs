@@ -164,7 +164,7 @@ impl OcclusionCullPass {
     pub fn encode_indirect(
         &self,
         device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut wgpu_profiler::Scope<wgpu::CommandEncoder>,
         dispatch_args_buffer: &wgpu::Buffer,
         visible_instances_buffer: &wgpu::Buffer,
         visible_count_buffer: &wgpu::Buffer,
@@ -208,10 +208,7 @@ impl OcclusionCullPass {
             ],
         });
 
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("OcclusionCull Pass"),
-            timestamp_writes: None,
-        });
+        let mut pass = encoder.scoped_compute_pass("OcclusionCull Pass");
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
         pass.dispatch_workgroups_indirect(dispatch_args_buffer, 0);

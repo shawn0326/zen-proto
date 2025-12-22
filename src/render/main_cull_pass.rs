@@ -299,14 +299,15 @@ impl MainCullPass {
         queue.write_buffer(&self._params_buffer, 8, bytemuck::bytes_of(&flag));
     }
 
-    pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, instance_count: u32) {
+    pub fn encode(
+        &self,
+        encoder: &mut wgpu_profiler::Scope<wgpu::CommandEncoder>,
+        instance_count: u32,
+    ) {
         let wg_size = 64;
         let group_count = (instance_count + wg_size - 1) / wg_size;
 
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("MainCull Pass"),
-            timestamp_writes: None,
-        });
+        let mut pass = encoder.scoped_compute_pass("MainCull Pass");
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.dispatch_workgroups(group_count, 1, 1);

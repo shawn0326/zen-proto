@@ -15,6 +15,7 @@ use draw_prepare_pass::DrawPreparePass;
 use hiz_generate_pass::HiZGeneratePass;
 use main_cull_pass::MainCullPass;
 use occlusion_cull_pass::OcclusionCullPass;
+use wgpu_profiler::GpuProfilerSettings;
 
 pub struct HiZTexture {
     texture: wgpu::Texture,
@@ -155,8 +156,9 @@ impl RenderContext {
         println!("{:?}", adapter.get_info());
         println!("{:?}", adapter.features());
 
-        let required_features =
-            wgpu::Features::MULTI_DRAW_INDIRECT_COUNT | wgpu::Features::INDIRECT_FIRST_INSTANCE;
+        let required_features = wgpu::Features::MULTI_DRAW_INDIRECT_COUNT
+            | wgpu::Features::INDIRECT_FIRST_INSTANCE
+            | wgpu::Features::TIMESTAMP_QUERY;
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -281,6 +283,8 @@ pub struct DefaultRenderer {
     pub occlusion_cull_pass: OcclusionCullPass,
     pub draw_pass: DrawPass,
     pub draw_pass_debug: DrawPass,
+    profiler: wgpu_profiler::GpuProfiler,
+    need_print_gpu_profile: bool,
 }
 
 impl DefaultRenderer {
@@ -330,6 +334,10 @@ impl DefaultRenderer {
 
         let hiz_generate_pass = HiZGeneratePass::new(&context.device);
         let occlusion_cull_pass = OcclusionCullPass::new(&context.device);
+
+        let profiler =
+            wgpu_profiler::GpuProfiler::new(&context.device, GpuProfilerSettings::default())
+                .unwrap();
         Self {
             resources,
             main_cull_pass,
@@ -341,11 +349,13 @@ impl DefaultRenderer {
             occlusion_cull_pass,
             draw_pass,
             draw_pass_debug,
+            profiler,
+            need_print_gpu_profile: false,
         }
     }
 
     pub fn render(
-        &self,
+        &mut self,
         context: &RenderContext,
         camera: Camera,
         debug_camera: Option<Camera>,
@@ -359,146 +369,26 @@ impl DefaultRenderer {
                 label: Some("Render Encoder"),
             });
 
-        let main_cull_pass = &self.main_cull_pass;
-        main_cull_pass.update_frustum(&context.queue, &camera);
-        main_cull_pass.reset_visible_count(&context.queue);
-        main_cull_pass.enable_occlusion_culling(&context.queue, enable_occlusion_culling);
-        main_cull_pass.encode(&mut encoder, self.resources.primitives.instance_count);
+        {
+            let mut scope = self.profiler.scope("Frame", &mut encoder);
 
-        self.dispatch_prepare_pass_a.encode(&mut encoder);
+            let main_cull_pass = &self.main_cull_pass;
+            main_cull_pass.update_frustum(&context.queue, &camera);
+            main_cull_pass.reset_visible_count(&context.queue);
+            main_cull_pass.enable_occlusion_culling(&context.queue, enable_occlusion_culling);
+            main_cull_pass.encode(&mut scope, self.resources.primitives.instance_count);
 
-        self.draw_prepare_pass_a.encode_indirect(
-            &mut encoder,
-            self.dispatch_prepare_pass_a.dispatch_args_buffer(),
-        );
+            self.dispatch_prepare_pass_a.encode(&mut scope);
 
-        let draw_pass = &self.draw_pass;
-        draw_pass.update_camera_buffer(&context.queue, &camera);
-        draw_pass.encode(
-            &mut encoder,
-            &surface_texture
-                .texture
-                .create_view(&wgpu::TextureViewDescriptor::default()),
-            &context
-                .depth_stencil_texture
-                .create_view(&wgpu::TextureViewDescriptor::default()),
-            &self.resources.meshes.index_buffer,
-            self.draw_prepare_pass_a.indirect_args_buffer(),
-            main_cull_pass.visible_count_buffer_a(),
-            self.resources.primitives.instance_count,
-            true,
-            true,
-        );
-
-        if enable_occlusion_culling {
-            let depth_for_hiz_view =
-                context
-                    .depth_stencil_texture
-                    .create_view(&wgpu::TextureViewDescriptor {
-                        label: Some("depth_for_hiz_view"),
-                        format: Some(wgpu::TextureFormat::Depth32Float),
-                        dimension: Some(wgpu::TextureViewDimension::D2),
-                        aspect: wgpu::TextureAspect::DepthOnly,
-                        base_mip_level: 0,
-                        mip_level_count: Some(1),
-                        base_array_layer: 0,
-                        array_layer_count: Some(1),
-                        usage: Some(wgpu::TextureUsages::TEXTURE_BINDING),
-                    });
-            self.hiz_generate_pass.encode(
-                &context.device,
-                &mut encoder,
-                &depth_for_hiz_view,
-                &context.hiz_texture,
-            );
-
-            self.dispatch_prepare_pass_b.encode(&mut encoder);
-
-            // Occlusion cull List B: update visibility_history based on Hi-Z.
-            // (History for List A will be handled later.)
-            self.occlusion_cull_pass.update_params(
-                &context.queue,
-                &camera,
-                context.surface_configuration.width,
-                context.surface_configuration.height,
-                0.00001,
-                0.0,
-            );
-            self.occlusion_cull_pass.encode_indirect(
-                &context.device,
-                &mut encoder,
-                self.dispatch_prepare_pass_b.dispatch_args_buffer(),
-                main_cull_pass.visible_instances_buffer_b(),
-                main_cull_pass.visible_count_buffer_b(),
-                &self.resources.primitives.instance_buffer,
-                &self.resources.meshes.mesh_table_buffer,
-                main_cull_pass.visibility_history_buffer(),
-                context.hiz_texture.sampled_full_view(),
-            );
-
-            self.draw_prepare_pass_b.encode_indirect(
-                &mut encoder,
-                self.dispatch_prepare_pass_b.dispatch_args_buffer(),
-            );
-
-            draw_pass.encode(
-                &mut encoder,
-                &surface_texture
-                    .texture
-                    .create_view(&wgpu::TextureViewDescriptor::default()),
-                &context
-                    .depth_stencil_texture
-                    .create_view(&wgpu::TextureViewDescriptor::default()),
-                &self.resources.meshes.index_buffer,
-                self.draw_prepare_pass_b.indirect_args_buffer(),
-                main_cull_pass.visible_count_buffer_b(),
-                self.resources.primitives.instance_count,
-                false,
-                false,
-            );
-
-            let depth_for_hiz_view =
-                context
-                    .depth_stencil_texture
-                    .create_view(&wgpu::TextureViewDescriptor {
-                        label: Some("depth_for_hiz_view"),
-                        format: Some(wgpu::TextureFormat::Depth32Float),
-                        dimension: Some(wgpu::TextureViewDimension::D2),
-                        aspect: wgpu::TextureAspect::DepthOnly,
-                        base_mip_level: 0,
-                        mip_level_count: Some(1),
-                        base_array_layer: 0,
-                        array_layer_count: Some(1),
-                        usage: Some(wgpu::TextureUsages::TEXTURE_BINDING),
-                    });
-            self.hiz_generate_pass.encode(
-                &context.device,
-                &mut encoder,
-                &depth_for_hiz_view,
-                &context.hiz_texture,
-            );
-
-            // Occlusion cull List B: update visibility_history based on Hi-Z.
-            // (History for List A will be handled later.)
-            self.occlusion_cull_pass.encode_indirect(
-                &context.device,
-                &mut encoder,
+            self.draw_prepare_pass_a.encode_indirect(
+                &mut scope,
                 self.dispatch_prepare_pass_a.dispatch_args_buffer(),
-                main_cull_pass.visible_instances_buffer_a(),
-                main_cull_pass.visible_count_buffer_a(),
-                &self.resources.primitives.instance_buffer,
-                &self.resources.meshes.mesh_table_buffer,
-                main_cull_pass.visibility_history_buffer(),
-                context.hiz_texture.sampled_full_view(),
             );
-        }
 
-        if let Some(debug_camera) = debug_camera {
-            self.draw_pass_debug
-                .update_camera_buffer(&context.queue, &debug_camera);
-
-            self.draw_pass_debug.encode(
-                &mut encoder,
+            let draw_pass = &self.draw_pass;
+            draw_pass.update_camera_buffer(&context.queue, &camera);
+            draw_pass.encode(
+                &mut scope,
                 &surface_texture
                     .texture
                     .create_view(&wgpu::TextureViewDescriptor::default()),
@@ -513,25 +403,162 @@ impl DefaultRenderer {
                 true,
             );
 
-            self.draw_pass_debug.encode(
-                &mut encoder,
-                &surface_texture
-                    .texture
-                    .create_view(&wgpu::TextureViewDescriptor::default()),
-                &context
-                    .depth_stencil_texture
-                    .create_view(&wgpu::TextureViewDescriptor::default()),
-                &self.resources.meshes.index_buffer,
-                self.draw_prepare_pass_b.indirect_args_buffer(),
-                main_cull_pass.visible_count_buffer_b(),
-                self.resources.primitives.instance_count,
-                false,
-                false,
-            );
+            if enable_occlusion_culling {
+                if self.hiz_generate_pass.needs_rebuild(&context.hiz_texture) {
+                    let depth_for_hiz_view =
+                        context
+                            .depth_stencil_texture
+                            .create_view(&wgpu::TextureViewDescriptor {
+                                label: Some("depth_for_hiz_view"),
+                                format: Some(wgpu::TextureFormat::Depth32Float),
+                                dimension: Some(wgpu::TextureViewDimension::D2),
+                                aspect: wgpu::TextureAspect::DepthOnly,
+                                base_mip_level: 0,
+                                mip_level_count: Some(1),
+                                base_array_layer: 0,
+                                array_layer_count: Some(1),
+                                usage: Some(wgpu::TextureUsages::TEXTURE_BINDING),
+                            });
+                    self.hiz_generate_pass.rebuild_bind_groups(
+                        &context.device,
+                        &depth_for_hiz_view,
+                        &context.hiz_texture,
+                    );
+                }
+
+                self.hiz_generate_pass
+                    .encode(&mut scope, &context.hiz_texture);
+
+                self.dispatch_prepare_pass_b.encode(&mut scope);
+
+                // Occlusion cull List B: update visibility_history based on Hi-Z.
+                // (History for List A will be handled later.)
+                self.occlusion_cull_pass.update_params(
+                    &context.queue,
+                    &camera,
+                    context.surface_configuration.width,
+                    context.surface_configuration.height,
+                    0.00001,
+                    0.0,
+                );
+                self.occlusion_cull_pass.encode_indirect(
+                    &context.device,
+                    &mut scope,
+                    self.dispatch_prepare_pass_b.dispatch_args_buffer(),
+                    main_cull_pass.visible_instances_buffer_b(),
+                    main_cull_pass.visible_count_buffer_b(),
+                    &self.resources.primitives.instance_buffer,
+                    &self.resources.meshes.mesh_table_buffer,
+                    main_cull_pass.visibility_history_buffer(),
+                    context.hiz_texture.sampled_full_view(),
+                );
+
+                self.draw_prepare_pass_b.encode_indirect(
+                    &mut scope,
+                    self.dispatch_prepare_pass_b.dispatch_args_buffer(),
+                );
+
+                draw_pass.encode(
+                    &mut scope,
+                    &surface_texture
+                        .texture
+                        .create_view(&wgpu::TextureViewDescriptor::default()),
+                    &context
+                        .depth_stencil_texture
+                        .create_view(&wgpu::TextureViewDescriptor::default()),
+                    &self.resources.meshes.index_buffer,
+                    self.draw_prepare_pass_b.indirect_args_buffer(),
+                    main_cull_pass.visible_count_buffer_b(),
+                    self.resources.primitives.instance_count,
+                    false,
+                    false,
+                );
+
+                self.hiz_generate_pass
+                    .encode(&mut scope, &context.hiz_texture);
+
+                // Occlusion cull List B: update visibility_history based on Hi-Z.
+                // (History for List A will be handled later.)
+                self.occlusion_cull_pass.encode_indirect(
+                    &context.device,
+                    &mut scope,
+                    self.dispatch_prepare_pass_a.dispatch_args_buffer(),
+                    main_cull_pass.visible_instances_buffer_a(),
+                    main_cull_pass.visible_count_buffer_a(),
+                    &self.resources.primitives.instance_buffer,
+                    &self.resources.meshes.mesh_table_buffer,
+                    main_cull_pass.visibility_history_buffer(),
+                    context.hiz_texture.sampled_full_view(),
+                );
+            }
+
+            if let Some(debug_camera) = debug_camera {
+                self.draw_pass_debug
+                    .update_camera_buffer(&context.queue, &debug_camera);
+
+                self.draw_pass_debug.encode(
+                    &mut scope,
+                    &surface_texture
+                        .texture
+                        .create_view(&wgpu::TextureViewDescriptor::default()),
+                    &context
+                        .depth_stencil_texture
+                        .create_view(&wgpu::TextureViewDescriptor::default()),
+                    &self.resources.meshes.index_buffer,
+                    self.draw_prepare_pass_a.indirect_args_buffer(),
+                    main_cull_pass.visible_count_buffer_a(),
+                    self.resources.primitives.instance_count,
+                    true,
+                    true,
+                );
+
+                self.draw_pass_debug.encode(
+                    &mut scope,
+                    &surface_texture
+                        .texture
+                        .create_view(&wgpu::TextureViewDescriptor::default()),
+                    &context
+                        .depth_stencil_texture
+                        .create_view(&wgpu::TextureViewDescriptor::default()),
+                    &self.resources.meshes.index_buffer,
+                    self.draw_prepare_pass_b.indirect_args_buffer(),
+                    main_cull_pass.visible_count_buffer_b(),
+                    self.resources.primitives.instance_count,
+                    false,
+                    false,
+                );
+            }
         }
+
+        self.profiler.resolve_queries(&mut encoder);
 
         context.queue.submit(Some(encoder.finish()));
 
         surface_texture.present();
+
+        self.profiler.end_frame().ok();
+
+        if self.need_print_gpu_profile {
+            self.print_gpu_profile(context);
+        }
+    }
+
+    fn print_gpu_profile(&mut self, context: &RenderContext) {
+        if let Some(profiling_data) = self
+            .profiler
+            .process_finished_frame(context.queue.get_timestamp_period())
+        {
+            wgpu_profiler::chrometrace::write_chrometrace(
+                std::path::Path::new("mytrace.json"),
+                &profiling_data,
+            )
+            .unwrap();
+        }
+
+        self.need_print_gpu_profile = false;
+    }
+
+    pub fn request_print_gpu_profile(&mut self) {
+        self.need_print_gpu_profile = true;
     }
 }

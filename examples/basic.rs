@@ -158,6 +158,11 @@ impl Example for Demo {
                 "Enable occlusion culling: {}",
                 self.enable_occlusion_culling
             );
+        } else if key_event.physical_key == winit::keyboard::KeyCode::KeyR
+            && key_event.state == winit::event::ElementState::Pressed
+        {
+            self.renderer.request_print_gpu_profile();
+            println!("--- GPU Profile Printed ---");
         }
     }
 }
