@@ -5,6 +5,7 @@ mod hiz_generate_pass;
 mod hiz_texture;
 mod main_cull_pass;
 mod occlusion_cull_pass;
+mod visibility_list;
 
 use crate::camera::Camera;
 use crate::material::Material;
@@ -18,6 +19,7 @@ use hiz_generate_pass::HiZGeneratePass;
 use hiz_texture::HiZTexture;
 use main_cull_pass::MainCullPass;
 use occlusion_cull_pass::OcclusionCullPass;
+use visibility_list::VisibilityList;
 use wgpu_profiler::GpuProfilerSettings;
 
 pub struct RenderContext {
@@ -136,6 +138,8 @@ impl RenderContext {
 
 pub struct DefaultRenderer {
     pub resources: Resources,
+    list_a: VisibilityList,
+    list_b: VisibilityList,
     pub main_cull_pass: MainCullPass,
     pub dispatch_prepare_pass_a: DispatchPreparePass,
     pub draw_prepare_pass_a: DrawPreparePass,
@@ -157,26 +161,37 @@ impl DefaultRenderer {
         primitives: &[Primitive],
     ) -> DefaultRenderer {
         let resources = Resources::new(&context.device, meshes, materials, primitives);
-        let main_cull_pass =
-            MainCullPass::new(&context.device, &resources.meshes, &resources.primitives);
-        let dispatch_prepare_pass_a =
-            DispatchPreparePass::new(&context.device, main_cull_pass.visible_count_buffer_a());
+        let list_a = VisibilityList::new(
+            &context.device,
+            "List_A",
+            resources.primitives.instance_count,
+        );
+        let list_b = VisibilityList::new(
+            &context.device,
+            "List_B",
+            resources.primitives.instance_count,
+        );
+        let main_cull_pass = MainCullPass::new(
+            &context.device,
+            &resources.meshes,
+            &resources.primitives,
+            &list_a,
+            &list_b,
+        );
+        let dispatch_prepare_pass_a = DispatchPreparePass::new(&context.device, &list_a);
         let draw_prepare_pass_a = DrawPreparePass::new(
             &context.device,
             &resources.meshes,
             &resources.primitives,
-            main_cull_pass.visible_instances_buffer_a(),
-            main_cull_pass.visible_count_buffer_a(),
+            &list_a,
             main_cull_pass.visibility_history_buffer(),
         );
-        let dispatch_prepare_pass_b =
-            DispatchPreparePass::new(&context.device, main_cull_pass.visible_count_buffer_b());
+        let dispatch_prepare_pass_b = DispatchPreparePass::new(&context.device, &list_b);
         let draw_prepare_pass_b = DrawPreparePass::new(
             &context.device,
             &resources.meshes,
             &resources.primitives,
-            main_cull_pass.visible_instances_buffer_b(),
-            main_cull_pass.visible_count_buffer_b(),
+            &list_b,
             main_cull_pass.visibility_history_buffer(),
         );
         let draw_pass = DrawPass::new(
@@ -202,6 +217,8 @@ impl DefaultRenderer {
                 .unwrap();
         Self {
             resources,
+            list_a,
+            list_b,
             main_cull_pass,
             dispatch_prepare_pass_a,
             draw_prepare_pass_a,
@@ -234,19 +251,17 @@ impl DefaultRenderer {
         {
             let mut scope = self.profiler.scope("Frame", &mut encoder);
 
+            self.list_a.reset(&context.queue);
+            self.list_b.reset(&context.queue);
+
             let main_cull_pass = &self.main_cull_pass;
-            main_cull_pass.update_frustum(&context.queue, &camera);
-            main_cull_pass.reset_visible_count(&context.queue);
-            main_cull_pass.enable_occlusion_culling(&context.queue, enable_occlusion_culling);
-            main_cull_pass.encode(&mut scope, self.resources.primitives.instance_count);
+            main_cull_pass.prepare(&context.queue, &camera, enable_occlusion_culling);
+            main_cull_pass.encode(&mut scope);
 
             self.dispatch_prepare_pass_a.encode(&mut scope);
 
-            self.draw_prepare_pass_a.reset_draw_count(&context.queue);
-            self.draw_prepare_pass_a.encode_indirect(
-                &mut scope,
-                self.dispatch_prepare_pass_a.dispatch_args_buffer(),
-            );
+            self.draw_prepare_pass_a
+                .encode_indirect(&mut scope, &self.list_a);
 
             let draw_pass = &self.draw_pass;
             draw_pass.update_camera_buffer(&context.queue, &camera);
@@ -259,8 +274,7 @@ impl DefaultRenderer {
                     .depth_stencil_texture
                     .create_view(&wgpu::TextureViewDescriptor::default()),
                 &self.resources.meshes.index_buffer,
-                self.draw_prepare_pass_a.indirect_args_buffer(),
-                self.draw_prepare_pass_a.draw_count_buffer(),
+                &self.list_a,
                 self.resources.primitives.instance_count,
                 true,
                 true,
@@ -307,20 +321,15 @@ impl DefaultRenderer {
                 self.occlusion_cull_pass.encode_indirect(
                     &context.device,
                     &mut scope,
-                    self.dispatch_prepare_pass_b.dispatch_args_buffer(),
-                    main_cull_pass.visible_instances_buffer_b(),
-                    main_cull_pass.visible_count_buffer_b(),
+                    &self.list_b,
                     &self.resources.primitives.instance_buffer,
                     &self.resources.meshes.mesh_table_buffer,
                     main_cull_pass.visibility_history_buffer(),
                     context.hiz_texture.sampled_full_view(),
                 );
 
-                self.draw_prepare_pass_b.reset_draw_count(&context.queue);
-                self.draw_prepare_pass_b.encode_indirect(
-                    &mut scope,
-                    self.dispatch_prepare_pass_b.dispatch_args_buffer(),
-                );
+                self.draw_prepare_pass_b
+                    .encode_indirect(&mut scope, &self.list_b);
 
                 draw_pass.encode(
                     &mut scope,
@@ -331,8 +340,7 @@ impl DefaultRenderer {
                         .depth_stencil_texture
                         .create_view(&wgpu::TextureViewDescriptor::default()),
                     &self.resources.meshes.index_buffer,
-                    self.draw_prepare_pass_b.indirect_args_buffer(),
-                    self.draw_prepare_pass_b.draw_count_buffer(),
+                    &self.list_b,
                     self.resources.primitives.instance_count,
                     false,
                     false,
@@ -346,9 +354,7 @@ impl DefaultRenderer {
                 self.occlusion_cull_pass.encode_indirect(
                     &context.device,
                     &mut scope,
-                    self.dispatch_prepare_pass_a.dispatch_args_buffer(),
-                    main_cull_pass.visible_instances_buffer_a(),
-                    main_cull_pass.visible_count_buffer_a(),
+                    &self.list_a,
                     &self.resources.primitives.instance_buffer,
                     &self.resources.meshes.mesh_table_buffer,
                     main_cull_pass.visibility_history_buffer(),
@@ -369,8 +375,7 @@ impl DefaultRenderer {
                         .depth_stencil_texture
                         .create_view(&wgpu::TextureViewDescriptor::default()),
                     &self.resources.meshes.index_buffer,
-                    self.draw_prepare_pass_a.indirect_args_buffer(),
-                    self.draw_prepare_pass_a.draw_count_buffer(),
+                    &self.list_a,
                     self.resources.primitives.instance_count,
                     true,
                     true,
@@ -385,8 +390,7 @@ impl DefaultRenderer {
                         .depth_stencil_texture
                         .create_view(&wgpu::TextureViewDescriptor::default()),
                     &self.resources.meshes.index_buffer,
-                    self.draw_prepare_pass_b.indirect_args_buffer(),
-                    self.draw_prepare_pass_b.draw_count_buffer(),
+                    &self.list_b,
                     self.resources.primitives.instance_count,
                     false,
                     false,

@@ -1,6 +1,6 @@
 use crate::{
     camera::Camera,
-    render::{MeshStorage, PrimitiveStorage},
+    render::{MeshStorage, PrimitiveStorage, visibility_list::VisibilityList},
 };
 
 #[repr(C)]
@@ -13,33 +13,35 @@ pub struct FrustumUniform {
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct CullParams {
-    pub instance_count: u32,
+    pub max_instance_count: u32,
     pub mesh_count: u32,
     pub enable_occlusion: u32,
     pub _pad1: u32,
 }
 
 pub struct MainCullPass {
+    max_instance_count: u32,
+
     pipeline: wgpu::ComputePipeline,
     bind_group: wgpu::BindGroup,
 
     frustum_buffer: wgpu::Buffer,
-    _params_buffer: wgpu::Buffer,
+    params_buffer: wgpu::Buffer,
 
     visibility_history_buffer: wgpu::Buffer,
-
-    visible_count_buffer_a: wgpu::Buffer,
-    visible_instances_buffer_a: wgpu::Buffer,
-
-    visible_count_buffer_b: wgpu::Buffer,
-    visible_instances_buffer_b: wgpu::Buffer,
 }
 
 impl MainCullPass {
-    pub fn new(device: &wgpu::Device, meshes: &MeshStorage, primitives: &PrimitiveStorage) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        meshes: &MeshStorage,
+        primitives: &PrimitiveStorage,
+        list_a: &VisibilityList,
+        list_b: &VisibilityList,
+    ) -> Self {
         use wgpu::util::DeviceExt;
 
-        let instance_count = primitives.instance_count;
+        let max_instance_count = primitives.instance_count;
 
         let frustum_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("cull.frustum_buffer"),
@@ -49,7 +51,7 @@ impl MainCullPass {
         });
 
         let params = CullParams {
-            instance_count,
+            max_instance_count,
             mesh_count: meshes.mesh_count,
             enable_occlusion: 1,
             _pad1: 0,
@@ -62,41 +64,7 @@ impl MainCullPass {
 
         let visibility_history_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("cull.visibility_history_buffer"),
-            size: instance_count as u64 * 4,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
-        let visible_count_buffer_a = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("cull.visible_count_buffer_a"),
-            size: 4,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::INDIRECT
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let visible_instances_buffer_a = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("cull.visible_instances_buffer_a"),
-            size: instance_count as u64 * 4,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
-        let visible_count_buffer_b = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("cull.visible_count_buffer_b"),
-            size: 4,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::INDIRECT
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let visible_instances_buffer_b = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("cull.visible_instances_buffer_b"),
-            size: instance_count as u64 * 4,
+            size: max_instance_count as u64 * 4,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
@@ -111,8 +79,11 @@ impl MainCullPass {
         // 1 mesh_table (ro storage)
         // 2 frustum (uniform)
         // 3 params (uniform)
-        // 4 counters (rw storage)
-        // 5 visible_instances (rw storage)
+        // 4 visibility_history_buffer (rw storage)
+        // 5 list_a.visible_count (rw storage)
+        // 6 list_a.visible_instances (rw storage)
+        // 7 list_b.visible_count (rw storage)
+        // 8 list_b.visible_instances (rw storage)
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("cull.main_cull_bgl"),
             entries: &[
@@ -250,62 +221,46 @@ impl MainCullPass {
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: visible_count_buffer_a.as_entire_binding(),
+                    resource: list_a.visible_count_buffer().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 6,
-                    resource: visible_instances_buffer_a.as_entire_binding(),
+                    resource: list_a.visible_instances_buffer().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 7,
-                    resource: visible_count_buffer_b.as_entire_binding(),
+                    resource: list_b.visible_count_buffer().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 8,
-                    resource: visible_instances_buffer_b.as_entire_binding(),
+                    resource: list_b.visible_instances_buffer().as_entire_binding(),
                 },
             ],
         });
 
         Self {
+            max_instance_count,
             pipeline,
             bind_group,
             frustum_buffer,
-            _params_buffer: params_buffer,
+            params_buffer: params_buffer,
             visibility_history_buffer,
-            visible_count_buffer_a,
-            visible_instances_buffer_a,
-            visible_count_buffer_b,
-            visible_instances_buffer_b,
         }
     }
 
-    pub fn update_frustum(&self, queue: &wgpu::Queue, camera: &Camera) {
+    pub fn prepare(&self, queue: &wgpu::Queue, camera: &Camera, enable_occlusion: bool) {
         queue.write_buffer(
             &self.frustum_buffer,
             0,
             bytemuck::bytes_of(&camera.frustum()),
         );
+        let flag: u32 = if enable_occlusion { 1 } else { 0 };
+        queue.write_buffer(&self.params_buffer, 8, bytemuck::bytes_of(&flag));
     }
 
-    pub fn reset_visible_count(&self, queue: &wgpu::Queue) {
-        let zero4 = [0u8; 4];
-        queue.write_buffer(&self.visible_count_buffer_a, 0, &zero4);
-        queue.write_buffer(&self.visible_count_buffer_b, 0, &zero4);
-    }
-
-    pub fn enable_occlusion_culling(&self, queue: &wgpu::Queue, enable: bool) {
-        let flag: u32 = if enable { 1 } else { 0 };
-        queue.write_buffer(&self._params_buffer, 8, bytemuck::bytes_of(&flag));
-    }
-
-    pub fn encode(
-        &self,
-        encoder: &mut wgpu_profiler::Scope<wgpu::CommandEncoder>,
-        instance_count: u32,
-    ) {
+    pub fn encode(&self, encoder: &mut wgpu_profiler::Scope<wgpu::CommandEncoder>) {
         let wg_size = 64;
-        let group_count = (instance_count + wg_size - 1) / wg_size;
+        let group_count = (self.max_instance_count + wg_size - 1) / wg_size;
 
         let mut pass = encoder.scoped_compute_pass("MainCull Pass");
         pass.set_pipeline(&self.pipeline);
@@ -315,21 +270,5 @@ impl MainCullPass {
 
     pub fn visibility_history_buffer(&self) -> &wgpu::Buffer {
         &self.visibility_history_buffer
-    }
-
-    pub fn visible_count_buffer_a(&self) -> &wgpu::Buffer {
-        &self.visible_count_buffer_a
-    }
-
-    pub fn visible_instances_buffer_a(&self) -> &wgpu::Buffer {
-        &self.visible_instances_buffer_a
-    }
-
-    pub fn visible_count_buffer_b(&self) -> &wgpu::Buffer {
-        &self.visible_count_buffer_b
-    }
-
-    pub fn visible_instances_buffer_b(&self) -> &wgpu::Buffer {
-        &self.visible_instances_buffer_b
     }
 }

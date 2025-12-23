@@ -1,20 +1,12 @@
+use crate::render::visibility_list::VisibilityList;
+
 pub struct DispatchPreparePass {
     pipeline: wgpu::ComputePipeline,
     bind_group: wgpu::BindGroup,
-    dispatch_args_buffer: wgpu::Buffer,
 }
 
 impl DispatchPreparePass {
-    pub fn new(device: &wgpu::Device, visible_count_buffer: &wgpu::Buffer) -> Self {
-        let dispatch_args_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("cull.dispatch_args_buffer"),
-            size: 12,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::INDIRECT
-                | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
+    pub fn new(device: &wgpu::Device, list: &VisibilityList) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("dispatch_prepare.wgsl"),
             source: wgpu::ShaderSource::Wgsl(
@@ -72,11 +64,11 @@ impl DispatchPreparePass {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: visible_count_buffer.as_entire_binding(),
+                    resource: list.visible_count_buffer().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: dispatch_args_buffer.as_entire_binding(),
+                    resource: list.dispatch_args_buffer().as_entire_binding(),
                 },
             ],
         });
@@ -84,7 +76,6 @@ impl DispatchPreparePass {
         Self {
             pipeline,
             bind_group,
-            dispatch_args_buffer,
         }
     }
 
@@ -93,9 +84,5 @@ impl DispatchPreparePass {
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.dispatch_workgroups(1, 1, 1);
-    }
-
-    pub fn dispatch_args_buffer(&self) -> &wgpu::Buffer {
-        &self.dispatch_args_buffer
     }
 }

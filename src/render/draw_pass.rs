@@ -2,6 +2,7 @@ use crate::camera::Camera;
 use crate::material::{Material, MaterialStorage};
 use crate::mesh::Vertex;
 use crate::primitive::Primitive;
+use crate::render::visibility_list::VisibilityList;
 use crate::render::{MeshStorage, PrimitiveStorage};
 
 pub struct DrawPass {
@@ -180,8 +181,7 @@ impl DrawPass {
         target_view: &wgpu::TextureView,
         depth_view: &wgpu::TextureView,
         index_buffer: &wgpu::Buffer,
-        indirect_buffer: &wgpu::Buffer,
-        count_buffer: &wgpu::Buffer,
+        visibility_list: &VisibilityList,
         max_count: u32,
         clear_color: bool,
         clear_depth: bool,
@@ -232,9 +232,9 @@ impl DrawPass {
         render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
 
         render_pass.multi_draw_indexed_indirect_count(
-            indirect_buffer,
+            visibility_list.draw_args_buffer(),
             0,
-            count_buffer,
+            visibility_list.draw_count_buffer(),
             0,
             max_count,
         );

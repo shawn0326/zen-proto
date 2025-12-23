@@ -1,4 +1,4 @@
-use crate::camera::Camera;
+use crate::{camera::Camera, render::visibility_list::VisibilityList};
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -165,9 +165,7 @@ impl OcclusionCullPass {
         &self,
         device: &wgpu::Device,
         encoder: &mut wgpu_profiler::Scope<wgpu::CommandEncoder>,
-        dispatch_args_buffer: &wgpu::Buffer,
-        visible_instances_buffer: &wgpu::Buffer,
-        visible_count_buffer: &wgpu::Buffer,
+        visibility_list: &VisibilityList,
         instance_buffer: &wgpu::Buffer,
         mesh_table_buffer: &wgpu::Buffer,
         visibility_history_buffer: &wgpu::Buffer,
@@ -179,7 +177,9 @@ impl OcclusionCullPass {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: visible_instances_buffer.as_entire_binding(),
+                    resource: visibility_list
+                        .visible_instances_buffer()
+                        .as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -191,7 +191,7 @@ impl OcclusionCullPass {
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: visible_count_buffer.as_entire_binding(),
+                    resource: visibility_list.visible_count_buffer().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
@@ -211,6 +211,6 @@ impl OcclusionCullPass {
         let mut pass = encoder.scoped_compute_pass("OcclusionCull Pass");
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
-        pass.dispatch_workgroups_indirect(dispatch_args_buffer, 0);
+        pass.dispatch_workgroups_indirect(visibility_list.dispatch_args_buffer(), 0);
     }
 }

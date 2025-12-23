@@ -1,4 +1,4 @@
-use crate::render::{MeshStorage, PrimitiveStorage};
+use crate::render::{MeshStorage, PrimitiveStorage, visibility_list::VisibilityList};
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -13,8 +13,6 @@ pub struct DrawIndexedIndirectArgs {
 pub struct DrawPreparePass {
     pipeline: wgpu::ComputePipeline,
     bind_group: wgpu::BindGroup,
-    indirect_args_buffer: wgpu::Buffer,
-    draw_count_buffer: wgpu::Buffer,
 }
 
 impl DrawPreparePass {
@@ -22,33 +20,9 @@ impl DrawPreparePass {
         device: &wgpu::Device,
         meshes: &MeshStorage,
         primitives: &PrimitiveStorage,
-        visible_instances_buffer: &wgpu::Buffer,
-        visible_count_buffer: &wgpu::Buffer,
+        visibility_list: &VisibilityList,
         history_visibility_buffer: &wgpu::Buffer,
     ) -> Self {
-        let instance_count = primitives.instance_count;
-
-        let indirect_args_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("cull.indirect_args_buffer"),
-            size: instance_count as u64 * std::mem::size_of::<DrawIndexedIndirectArgs>() as u64,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::INDIRECT
-                | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
-        // Stores the actual number of draw commands produced by draw_prepare.wgsl.
-        // Used by multi_draw_indexed_indirect_count so we don't issue lots of 0-instance draws.
-        let draw_count_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("cull.draw_count_buffer"),
-            size: 4,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::INDIRECT
-                | wgpu::BufferUsages::COPY_DST
-                | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("draw_prepare.wgsl"),
             source: wgpu::ShaderSource::Wgsl(
@@ -161,7 +135,9 @@ impl DrawPreparePass {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: visible_instances_buffer.as_entire_binding(),
+                    resource: visibility_list
+                        .visible_instances_buffer()
+                        .as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -173,11 +149,11 @@ impl DrawPreparePass {
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: visible_count_buffer.as_entire_binding(),
+                    resource: visibility_list.visible_count_buffer().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
-                    resource: indirect_args_buffer.as_entire_binding(),
+                    resource: visibility_list.draw_args_buffer().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
@@ -185,7 +161,7 @@ impl DrawPreparePass {
                 },
                 wgpu::BindGroupEntry {
                     binding: 6,
-                    resource: draw_count_buffer.as_entire_binding(),
+                    resource: visibility_list.draw_count_buffer().as_entire_binding(),
                 },
             ],
         });
@@ -193,31 +169,17 @@ impl DrawPreparePass {
         Self {
             pipeline,
             bind_group,
-            indirect_args_buffer,
-            draw_count_buffer,
         }
-    }
-
-    pub fn reset_draw_count(&self, queue: &wgpu::Queue) {
-        queue.write_buffer(&self.draw_count_buffer, 0, bytemuck::bytes_of(&0u32));
     }
 
     pub fn encode_indirect(
         &self,
         encoder: &mut wgpu_profiler::Scope<wgpu::CommandEncoder>,
-        dispatch_args_buffer: &wgpu::Buffer,
+        visibility_list: &VisibilityList,
     ) {
         let mut pass = encoder.scoped_compute_pass("DrawPrepare Pass");
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.dispatch_workgroups_indirect(dispatch_args_buffer, 0);
-    }
-
-    pub fn indirect_args_buffer(&self) -> &wgpu::Buffer {
-        &self.indirect_args_buffer
-    }
-
-    pub fn draw_count_buffer(&self) -> &wgpu::Buffer {
-        &self.draw_count_buffer
+        pass.dispatch_workgroups_indirect(visibility_list.dispatch_args_buffer(), 0);
     }
 }
