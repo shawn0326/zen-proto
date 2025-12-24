@@ -205,17 +205,16 @@ impl OcclusionCullPass {
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&params));
     }
 
-    pub fn encode(
-        &self,
-        encoder: &mut wgpu_profiler::Scope<wgpu::CommandEncoder>,
-        list: &VisibilityList,
-    ) {
+    pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, list: &VisibilityList) {
         let bind_group_cache = self.bind_group_cache.borrow();
         let bind_group = bind_group_cache
             .get(&list.id())
             .expect("OcclusionCullPass: missing bind group; call prepare() before encode()");
 
-        let mut pass = encoder.scoped_compute_pass("occlusion_cull.pass");
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some(&format!("occlusion_cull.{}.pass", list.label())),
+            timestamp_writes: None,
+        });
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, bind_group, &[]);
         pass.dispatch_workgroups_indirect(list.dispatch_args_buffer(), 0);

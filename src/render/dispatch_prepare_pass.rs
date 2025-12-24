@@ -89,17 +89,16 @@ impl DispatchPreparePass {
         });
     }
 
-    pub fn encode(
-        &self,
-        encoder: &mut wgpu_profiler::Scope<wgpu::CommandEncoder>,
-        list: &VisibilityList,
-    ) {
+    pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, list: &VisibilityList) {
         let bind_group_cache = self.bind_group_cache.borrow();
         let bind_group = bind_group_cache
             .get(&list.id())
             .expect("DispatchPreparePass: missing bind group; call prepare() before encode()");
 
-        let mut pass = encoder.scoped_compute_pass("dispatch_prepare.pass");
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some(&format!("dispatch_prepare.{}.pass", list.label())),
+            timestamp_writes: None,
+        });
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, bind_group, &[]);
         pass.dispatch_workgroups(1, 1, 1);

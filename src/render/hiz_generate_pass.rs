@@ -212,11 +212,7 @@ impl HiZGeneratePass {
             || self.cached_height != hiz.height()
     }
 
-    pub fn encode(
-        &self,
-        encoder: &mut wgpu_profiler::Scope<wgpu::CommandEncoder>,
-        hiz: &HiZTexture,
-    ) {
+    pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, hiz: &HiZTexture) {
         // 保险：如果没 rebuild 或缓存不匹配，直接放弃
         if self.depth_to_mip0_bg.is_none()
             || self.cached_mip_levels != hiz.mip_level_count()
@@ -229,7 +225,10 @@ impl HiZGeneratePass {
         // Pass 1: depth -> HiZ mip0
         {
             let bg0 = self.depth_to_mip0_bg.as_ref().unwrap();
-            let mut pass = encoder.scoped_compute_pass("HiZ: depth_to_mip0");
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("hiz.depth_to_mip0.pass"),
+                timestamp_writes: None,
+            });
             pass.set_pipeline(&self.depth_to_mip0_pipeline);
             pass.set_bind_group(0, bg0, &[]);
             pass.dispatch_workgroups(
@@ -248,7 +247,10 @@ impl HiZGeneratePass {
 
             let bg = &self.mip_to_mip_bgs[(mip - 1) as usize];
 
-            let mut pass = encoder.scoped_compute_pass("HiZ: mip_to_mip");
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some(&format!("hiz.mip_to_mip{}.pass", mip)),
+                timestamp_writes: None,
+            });
             pass.set_pipeline(&self.mip_to_mip_pipeline);
             pass.set_bind_group(0, bg, &[]);
             pass.dispatch_workgroups(Self::ceil_div(dst_w, 8), Self::ceil_div(dst_h, 8), 1);

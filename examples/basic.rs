@@ -11,11 +11,13 @@ use zen_proto::{
     camera::{Camera, PerspectiveProjection},
     material, mesh,
     primitive::Primitive,
-    render::{DefaultRenderer, RenderContext},
+    render::{DefaultRenderer, RenderTarget, request_device_and_target},
 };
 
 struct Demo {
-    render_context: RenderContext,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    target: RenderTarget,
     renderer: DefaultRenderer,
     camera: Camera,
     debug_camera: Camera,
@@ -28,7 +30,7 @@ impl Example for Demo {
     async fn init(window: Arc<Window>) -> Self {
         let instance = wgpu::Instance::default();
         let surface = instance.create_surface(window).unwrap();
-        let render_context = RenderContext::new(&instance, surface).await;
+        let (device, queue, target) = request_device_and_target(&instance, surface).await;
         let projection = PerspectiveProjection::default();
         let camera = Camera::new(
             glam::Mat4::look_at_rh(
@@ -102,9 +104,11 @@ impl Example for Demo {
             });
         }
 
-        let renderer = DefaultRenderer::new(&render_context, &meshes, &materials, &primitives);
+        let renderer = DefaultRenderer::new(&device, &target, &meshes, &materials, &primitives);
         Demo {
-            render_context,
+            device,
+            queue,
+            target,
             renderer,
             camera,
             debug_camera,
@@ -115,7 +119,7 @@ impl Example for Demo {
     }
 
     fn resize(&mut self, width: u32, height: u32) {
-        self.render_context.resize(width, height);
+        self.target.resize(&self.device, width, height);
     }
 
     fn update(&mut self) {}
@@ -127,7 +131,9 @@ impl Example for Demo {
             None
         };
         self.renderer.render(
-            &self.render_context,
+            &self.device,
+            &self.queue,
+            &mut self.target,
             self.camera,
             debug_camera,
             self.enable_occlusion_culling,
@@ -158,11 +164,6 @@ impl Example for Demo {
                 "Enable occlusion culling: {}",
                 self.enable_occlusion_culling
             );
-        } else if key_event.physical_key == winit::keyboard::KeyCode::KeyR
-            && key_event.state == winit::event::ElementState::Pressed
-        {
-            self.renderer.request_print_gpu_profile();
-            println!("--- GPU Profile Printed ---");
         }
     }
 }

@@ -221,11 +221,7 @@ impl MainCullPass {
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniform));
     }
 
-    pub fn encode(
-        &self,
-        encoder: &mut wgpu_profiler::Scope<wgpu::CommandEncoder>,
-        max_instance_count: u32,
-    ) {
+    pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, max_instance_count: u32) {
         let wg_size = 64;
         let group_count = (max_instance_count + wg_size - 1) / wg_size;
 
@@ -234,7 +230,10 @@ impl MainCullPass {
             .as_ref()
             .expect("MainCullPass: missing bind group; call prepare() before encode()");
 
-        let mut pass = encoder.scoped_compute_pass("main_cull.pass");
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("main_cull.pass"),
+            timestamp_writes: None,
+        });
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, bind_group, &[]);
         pass.dispatch_workgroups(group_count, 1, 1);

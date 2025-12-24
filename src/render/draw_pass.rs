@@ -181,11 +181,11 @@ impl DrawPass {
 
     pub fn encode(
         &self,
-        encoder: &mut wgpu_profiler::Scope<wgpu::CommandEncoder>,
+        encoder: &mut wgpu::CommandEncoder,
         target_view: &wgpu::TextureView,
         depth_view: &wgpu::TextureView,
         index_buffer: &wgpu::Buffer,
-        visibility_list: &VisibilityList,
+        list: &VisibilityList,
         max_count: u32,
         clear_color: bool,
         clear_depth: bool,
@@ -207,39 +207,36 @@ impl DrawPass {
             wgpu::LoadOp::Load
         };
 
-        let mut render_pass = encoder.scoped_render_pass(
-            "DrawPass RenderPass",
-            wgpu::RenderPassDescriptor {
-                label: Some("draw.pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target_view,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: color_load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: depth_load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some(&format!("draw.{}.pass", list.label())),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target_view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: color_load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: depth_load,
+                    store: wgpu::StoreOp::Store,
                 }),
-                ..Default::default()
-            },
-        );
+                stencil_ops: None,
+            }),
+            ..Default::default()
+        });
 
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_bind_group(0, &self.bind_group, &[offset * UNIFORM_SIZE_BYTES]);
         render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
 
         render_pass.multi_draw_indexed_indirect_count(
-            visibility_list.draw_args_buffer(),
+            list.draw_args_buffer(),
             0,
-            visibility_list.draw_count_buffer(),
+            list.draw_count_buffer(),
             0,
             max_count,
         );
