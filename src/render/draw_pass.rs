@@ -1,9 +1,12 @@
 use crate::camera::Camera;
-use crate::material::{Material, MaterialStorage};
+use crate::material::Material;
 use crate::mesh::Vertex;
 use crate::primitive::Primitive;
 use crate::render::visibility_list::VisibilityList;
-use crate::render::{MeshStorage, PrimitiveStorage};
+use crate::resources::Resources;
+
+const UNIFORM_SIZE_BYTES: u32 = 256;
+const MAX_UNIFORM_COUNT: u32 = 2;
 
 pub struct DrawPass {
     pub pipeline: wgpu::RenderPipeline,
@@ -15,13 +18,11 @@ impl DrawPass {
     pub fn new(
         device: &wgpu::Device,
         surface_format: wgpu::TextureFormat,
-        meshes: &MeshStorage,
-        materials: &MaterialStorage,
-        primitives: &PrimitiveStorage,
+        resources: &Resources,
     ) -> Self {
         let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("draw.camera_buffer"),
-            size: 2 * std::mem::size_of::<glam::Mat4>() as u64,
+            size: (UNIFORM_SIZE_BYTES * MAX_UNIFORM_COUNT) as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -77,16 +78,15 @@ impl DrawPass {
                     },
                     count: None,
                 },
-                // camera
+                // uniforms
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
                     visibility: wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
+                        has_dynamic_offset: true,
                         min_binding_size: Some(
-                            std::num::NonZeroU64::new(std::mem::size_of::<glam::Mat4>() as u64)
-                                .unwrap(),
+                            std::num::NonZeroU64::new(UNIFORM_SIZE_BYTES as u64).unwrap(),
                         ),
                     },
                     count: None,
@@ -100,19 +100,23 @@ impl DrawPass {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: meshes.vertex_buffer.as_entire_binding(),
+                    resource: resources.meshes.vertex_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: materials.material_buffer.as_entire_binding(),
+                    resource: resources.materials.material_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: primitives.instance_buffer.as_entire_binding(),
+                    resource: resources.primitives.instance_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: camera_buffer.as_entire_binding(),
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &camera_buffer,
+                        offset: 0,
+                        size: Some(std::num::NonZeroU64::new(UNIFORM_SIZE_BYTES as u64).unwrap()),
+                    }),
                 },
             ],
         });
@@ -167,10 +171,10 @@ impl DrawPass {
 }
 
 impl DrawPass {
-    pub fn update_camera_buffer(&self, queue: &wgpu::Queue, camera: &Camera) {
+    pub fn update(&self, queue: &wgpu::Queue, camera: &Camera, offset: u64) {
         queue.write_buffer(
             &self.camera_buffer,
-            0,
+            offset * UNIFORM_SIZE_BYTES as u64,
             bytemuck::bytes_of(&camera.view_projection()),
         );
     }
@@ -185,6 +189,7 @@ impl DrawPass {
         max_count: u32,
         clear_color: bool,
         clear_depth: bool,
+        offset: u32,
     ) {
         let color_load = if clear_color {
             wgpu::LoadOp::Clear(wgpu::Color {
@@ -228,7 +233,7 @@ impl DrawPass {
         );
 
         render_pass.set_pipeline(&self.pipeline);
-        render_pass.set_bind_group(0, &self.bind_group, &[]);
+        render_pass.set_bind_group(0, &self.bind_group, &[offset * UNIFORM_SIZE_BYTES]);
         render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
 
         render_pass.multi_draw_indexed_indirect_count(

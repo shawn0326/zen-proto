@@ -1,7 +1,4 @@
-use crate::{
-    camera::Camera,
-    render::{MeshStorage, PrimitiveStorage, visibility_list::VisibilityList},
-};
+use crate::{camera::Camera, render::visibility_list::VisibilityList, resources::Resources};
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -34,14 +31,13 @@ pub struct MainCullPass {
 impl MainCullPass {
     pub fn new(
         device: &wgpu::Device,
-        meshes: &MeshStorage,
-        primitives: &PrimitiveStorage,
+        resources: &Resources,
         list_a: &VisibilityList,
         list_b: &VisibilityList,
     ) -> Self {
         use wgpu::util::DeviceExt;
 
-        let max_instance_count = primitives.instance_count;
+        let max_instance_count = resources.primitives.instance_count;
 
         let frustum_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("cull.frustum_buffer"),
@@ -52,7 +48,7 @@ impl MainCullPass {
 
         let params = CullParams {
             max_instance_count,
-            mesh_count: meshes.mesh_count,
+            mesh_count: resources.meshes.mesh_count,
             enable_occlusion: 1,
             _pad1: 0,
         };
@@ -201,11 +197,11 @@ impl MainCullPass {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: primitives.instance_buffer.as_entire_binding(),
+                    resource: resources.primitives.instance_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: meshes.mesh_table_buffer.as_entire_binding(),
+                    resource: resources.meshes.mesh_table_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,

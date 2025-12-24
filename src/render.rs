@@ -9,8 +9,8 @@ mod visibility_list;
 
 use crate::camera::Camera;
 use crate::material::Material;
-use crate::mesh::{Mesh, MeshStorage};
-use crate::primitive::{Primitive, PrimitiveStorage};
+use crate::mesh::Mesh;
+use crate::primitive::Primitive;
 use crate::resources::Resources;
 use dispatch_prepare_pass::DispatchPreparePass;
 use draw_pass::DrawPass;
@@ -141,14 +141,11 @@ pub struct DefaultRenderer {
     list_a: VisibilityList,
     list_b: VisibilityList,
     pub main_cull_pass: MainCullPass,
-    pub dispatch_prepare_pass_a: DispatchPreparePass,
-    pub draw_prepare_pass_a: DrawPreparePass,
-    pub dispatch_prepare_pass_b: DispatchPreparePass,
-    pub draw_prepare_pass_b: DrawPreparePass,
+    pub dispatch_prepare_pass: DispatchPreparePass,
+    pub draw_prepare_pass: DrawPreparePass,
     pub hiz_generate_pass: HiZGeneratePass,
     pub occlusion_cull_pass: OcclusionCullPass,
     pub draw_pass: DrawPass,
-    pub draw_pass_debug: DrawPass,
     profiler: wgpu_profiler::GpuProfiler,
     need_print_gpu_profile: bool,
 }
@@ -161,6 +158,7 @@ impl DefaultRenderer {
         primitives: &[Primitive],
     ) -> DefaultRenderer {
         let resources = Resources::new(&context.device, meshes, materials, primitives);
+
         let list_a = VisibilityList::new(
             &context.device,
             "List_A",
@@ -171,42 +169,31 @@ impl DefaultRenderer {
             "List_B",
             resources.primitives.instance_count,
         );
-        let main_cull_pass = MainCullPass::new(
+
+        let main_cull_pass = MainCullPass::new(&context.device, &resources, &list_a, &list_b);
+
+        let dispatch_prepare_pass = DispatchPreparePass::new(&context.device);
+        dispatch_prepare_pass.prepare(&context.device, &list_a);
+        dispatch_prepare_pass.prepare(&context.device, &list_b);
+
+        let draw_prepare_pass = DrawPreparePass::new(&context.device);
+        draw_prepare_pass.prepare(
             &context.device,
-            &resources.meshes,
-            &resources.primitives,
-            &list_a,
-            &list_b,
-        );
-        let dispatch_prepare_pass_a = DispatchPreparePass::new(&context.device, &list_a);
-        let draw_prepare_pass_a = DrawPreparePass::new(
-            &context.device,
-            &resources.meshes,
-            &resources.primitives,
+            &resources,
             &list_a,
             main_cull_pass.visibility_history_buffer(),
         );
-        let dispatch_prepare_pass_b = DispatchPreparePass::new(&context.device, &list_b);
-        let draw_prepare_pass_b = DrawPreparePass::new(
+        draw_prepare_pass.prepare(
             &context.device,
-            &resources.meshes,
-            &resources.primitives,
+            &resources,
             &list_b,
             main_cull_pass.visibility_history_buffer(),
         );
+
         let draw_pass = DrawPass::new(
             &context.device,
             context.surface_configuration.format,
-            &resources.meshes,
-            &resources.materials,
-            &resources.primitives,
-        );
-        let draw_pass_debug = DrawPass::new(
-            &context.device,
-            context.surface_configuration.format,
-            &resources.meshes,
-            &resources.materials,
-            &resources.primitives,
+            &resources,
         );
 
         let hiz_generate_pass = HiZGeneratePass::new(&context.device);
@@ -220,14 +207,11 @@ impl DefaultRenderer {
             list_a,
             list_b,
             main_cull_pass,
-            dispatch_prepare_pass_a,
-            draw_prepare_pass_a,
-            dispatch_prepare_pass_b,
-            draw_prepare_pass_b,
+            dispatch_prepare_pass,
+            draw_prepare_pass,
             hiz_generate_pass,
             occlusion_cull_pass,
             draw_pass,
-            draw_pass_debug,
             profiler,
             need_print_gpu_profile: false,
         }
@@ -258,13 +242,12 @@ impl DefaultRenderer {
             main_cull_pass.prepare(&context.queue, &camera, enable_occlusion_culling);
             main_cull_pass.encode(&mut scope);
 
-            self.dispatch_prepare_pass_a.encode(&mut scope);
+            self.dispatch_prepare_pass.encode(&mut scope, &self.list_a);
 
-            self.draw_prepare_pass_a
-                .encode_indirect(&mut scope, &self.list_a);
+            self.draw_prepare_pass.encode(&mut scope, &self.list_a);
 
             let draw_pass = &self.draw_pass;
-            draw_pass.update_camera_buffer(&context.queue, &camera);
+            draw_pass.update(&context.queue, &camera, 0);
             draw_pass.encode(
                 &mut scope,
                 &surface_texture
@@ -278,6 +261,7 @@ impl DefaultRenderer {
                 self.resources.primitives.instance_count,
                 true,
                 true,
+                0,
             );
 
             if enable_occlusion_culling {
@@ -306,7 +290,7 @@ impl DefaultRenderer {
                 self.hiz_generate_pass
                     .encode(&mut scope, &context.hiz_texture);
 
-                self.dispatch_prepare_pass_b.encode(&mut scope);
+                self.dispatch_prepare_pass.encode(&mut scope, &self.list_b);
 
                 // Occlusion cull List B: update visibility_history based on Hi-Z.
                 // (History for List A will be handled later.)
@@ -328,8 +312,7 @@ impl DefaultRenderer {
                     context.hiz_texture.sampled_full_view(),
                 );
 
-                self.draw_prepare_pass_b
-                    .encode_indirect(&mut scope, &self.list_b);
+                self.draw_prepare_pass.encode(&mut scope, &self.list_b);
 
                 draw_pass.encode(
                     &mut scope,
@@ -344,6 +327,7 @@ impl DefaultRenderer {
                     self.resources.primitives.instance_count,
                     false,
                     false,
+                    0,
                 );
 
                 self.hiz_generate_pass
@@ -363,10 +347,9 @@ impl DefaultRenderer {
             }
 
             if let Some(debug_camera) = debug_camera {
-                self.draw_pass_debug
-                    .update_camera_buffer(&context.queue, &debug_camera);
+                self.draw_pass.update(&context.queue, &debug_camera, 1);
 
-                self.draw_pass_debug.encode(
+                self.draw_pass.encode(
                     &mut scope,
                     &surface_texture
                         .texture
@@ -379,9 +362,10 @@ impl DefaultRenderer {
                     self.resources.primitives.instance_count,
                     true,
                     true,
+                    1,
                 );
 
-                self.draw_pass_debug.encode(
+                self.draw_pass.encode(
                     &mut scope,
                     &surface_texture
                         .texture
@@ -394,6 +378,7 @@ impl DefaultRenderer {
                     self.resources.primitives.instance_count,
                     false,
                     false,
+                    1,
                 );
             }
         }
