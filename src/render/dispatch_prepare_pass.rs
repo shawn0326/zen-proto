@@ -99,7 +99,7 @@ impl DispatchPreparePass {
             .get(&list.id())
             .expect("DispatchPreparePass: missing bind group; call prepare() before encode()");
 
-        let mut pass = encoder.scoped_compute_pass("DispatchPrepare Pass");
+        let mut pass = encoder.scoped_compute_pass("dispatch_prepare.pass");
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, bind_group, &[]);
         pass.dispatch_workgroups(1, 1, 1);

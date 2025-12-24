@@ -1,5 +1,4 @@
 pub struct HiZTexture {
-    texture: wgpu::Texture,
     width: u32,
     height: u32,
     mip_level_count: u32,
@@ -75,7 +74,6 @@ impl HiZTexture {
         }
 
         Self {
-            texture,
             width,
             height,
             mip_level_count,
@@ -107,9 +105,5 @@ impl HiZTexture {
 
     pub fn storage_view(&self, mip: u32) -> &wgpu::TextureView {
         &self.storage_views[mip as usize]
-    }
-
-    pub fn texture(&self) -> &wgpu::Texture {
-        &self.texture
     }
 }

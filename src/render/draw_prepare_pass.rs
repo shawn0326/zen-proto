@@ -1,3 +1,4 @@
+use crate::render::visibility_history::VisibilityHistory;
 use crate::render::visibility_list::VisibilityList;
 use crate::resources::Resources;
 use std::cell::RefCell;
@@ -5,12 +6,12 @@ use std::collections::HashMap;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct DrawIndexedIndirectArgs {
-    pub index_count: u32,
-    pub instance_count: u32,
-    pub first_index: u32,
-    pub base_vertex: i32,
-    pub first_instance: u32,
+struct DrawIndexedIndirectArgs {
+    index_count: u32,
+    instance_count: u32,
+    first_index: u32,
+    base_vertex: i32,
+    first_instance: u32,
 }
 
 pub struct DrawPreparePass {
@@ -138,8 +139,8 @@ impl DrawPreparePass {
         &self,
         device: &wgpu::Device,
         resources: &Resources,
+        visibility_history: &VisibilityHistory,
         list: &VisibilityList,
-        history_visibility_buffer: &wgpu::Buffer,
     ) {
         let mut cache = self.bind_group_cache.borrow_mut();
         cache.entry(list.id()).or_insert_with(|| {
@@ -170,7 +171,7 @@ impl DrawPreparePass {
                     },
                     wgpu::BindGroupEntry {
                         binding: 5,
-                        resource: history_visibility_buffer.as_entire_binding(),
+                        resource: visibility_history.buffer().as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 6,
@@ -191,7 +192,7 @@ impl DrawPreparePass {
             .get(&list.id())
             .expect("DrawPreparePass: missing bind group; call prepare() before encode()");
 
-        let mut pass = encoder.scoped_compute_pass("DrawPrepare Pass");
+        let mut pass = encoder.scoped_compute_pass("draw_prepare.pass");
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, bind_group, &[]);
         pass.dispatch_workgroups_indirect(list.dispatch_args_buffer(), 0);

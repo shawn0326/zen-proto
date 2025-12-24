@@ -1,67 +1,33 @@
-use crate::{camera::Camera, render::visibility_list::VisibilityList, resources::Resources};
+use crate::{
+    camera::Camera,
+    render::{visibility_history::VisibilityHistory, visibility_list::VisibilityList},
+    resources::Resources,
+};
+use std::cell::RefCell;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct FrustumUniform {
-    // 6 planes in world space: normal.xyz, d (Ax + By + Cz + D = 0)
-    pub planes: [glam::Vec4; 6],
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct CullParams {
-    pub max_instance_count: u32,
-    pub mesh_count: u32,
-    pub enable_occlusion: u32,
-    pub _pad1: u32,
+struct MainCullUniform {
+    planes: [glam::Vec4; 6],
+    max_instance_count: u32,
+    mesh_count: u32,
+    enable_occlusion: u32,
+    _pad: u32,
 }
 
 pub struct MainCullPass {
-    max_instance_count: u32,
-
     pipeline: wgpu::ComputePipeline,
-    bind_group: wgpu::BindGroup,
-
-    frustum_buffer: wgpu::Buffer,
-    params_buffer: wgpu::Buffer,
-
-    visibility_history_buffer: wgpu::Buffer,
+    bind_group_layout: wgpu::BindGroupLayout,
+    bind_group: RefCell<Option<wgpu::BindGroup>>,
+    uniform_buffer: wgpu::Buffer,
 }
 
 impl MainCullPass {
-    pub fn new(
-        device: &wgpu::Device,
-        resources: &Resources,
-        list_a: &VisibilityList,
-        list_b: &VisibilityList,
-    ) -> Self {
-        use wgpu::util::DeviceExt;
-
-        let max_instance_count = resources.primitives.instance_count;
-
-        let frustum_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("cull.frustum_buffer"),
-            size: std::mem::size_of::<FrustumUniform>() as u64,
+    pub fn new(device: &wgpu::Device) -> Self {
+        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("main_cull.uniform.buffer"),
+            size: std::mem::size_of::<MainCullUniform>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let params = CullParams {
-            max_instance_count,
-            mesh_count: resources.meshes.mesh_count,
-            enable_occlusion: 1,
-            _pad1: 0,
-        };
-        let params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("cull.params_buffer"),
-            contents: bytemuck::bytes_of(&params),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let visibility_history_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("cull.visibility_history_buffer"),
-            size: max_instance_count as u64 * 4,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
@@ -73,15 +39,14 @@ impl MainCullPass {
         // main_cull.wgsl bindings:
         // 0 instances (ro storage)
         // 1 mesh_table (ro storage)
-        // 2 frustum (uniform)
-        // 3 params (uniform)
-        // 4 visibility_history_buffer (rw storage)
-        // 5 list_a.visible_count (rw storage)
-        // 6 list_a.visible_instances (rw storage)
-        // 7 list_b.visible_count (rw storage)
-        // 8 list_b.visible_instances (rw storage)
-        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("cull.main_cull_bgl"),
+        // 2 uniform_buffer (uniform)
+        // 3 visibility_history_buffer (rw storage)
+        // 4 list_a.visible_count (rw storage)
+        // 5 list_a.visible_instances (rw storage)
+        // 6 list_b.visible_count (rw storage)
+        // 7 list_b.visible_instances (rw storage)
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("main_cull.bind_group_layout"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
@@ -117,7 +82,7 @@ impl MainCullPass {
                     binding: 3,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -155,16 +120,6 @@ impl MainCullPass {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 7,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 8,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -177,13 +132,13 @@ impl MainCullPass {
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("cull.main_cull_pipeline_layout"),
-            bind_group_layouts: &[&bgl],
+            label: Some("main_cull.pipeline_layout"),
+            bind_group_layouts: &[&bind_group_layout],
             push_constant_ranges: &[],
         });
 
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("cull.main_cull_pipeline"),
+            label: Some("main_cull.pipeline"),
             layout: Some(&pipeline_layout),
             module: &module,
             entry_point: Some("main"),
@@ -191,9 +146,25 @@ impl MainCullPass {
             cache: None,
         });
 
+        Self {
+            pipeline,
+            bind_group_layout,
+            bind_group: RefCell::new(None),
+            uniform_buffer,
+        }
+    }
+
+    pub fn prepare(
+        &self,
+        device: &wgpu::Device,
+        resources: &Resources,
+        visibility_history: &VisibilityHistory,
+        list_a: &VisibilityList,
+        list_b: &VisibilityList,
+    ) {
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("cull.main_cull_bind_group"),
-            layout: &bgl,
+            label: Some("main_cull.bind_group"),
+            layout: &self.bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -205,66 +176,67 @@ impl MainCullPass {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: frustum_buffer.as_entire_binding(),
+                    resource: self.uniform_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: params_buffer.as_entire_binding(),
+                    resource: visibility_history.buffer().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
-                    resource: visibility_history_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
                     resource: list_a.visible_count_buffer().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 6,
+                    binding: 5,
                     resource: list_a.visible_instances_buffer().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 7,
+                    binding: 6,
                     resource: list_b.visible_count_buffer().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 8,
+                    binding: 7,
                     resource: list_b.visible_instances_buffer().as_entire_binding(),
                 },
             ],
         });
 
-        Self {
-            max_instance_count,
-            pipeline,
-            bind_group,
-            frustum_buffer,
-            params_buffer: params_buffer,
-            visibility_history_buffer,
-        }
+        *self.bind_group.borrow_mut() = Some(bind_group);
     }
 
-    pub fn prepare(&self, queue: &wgpu::Queue, camera: &Camera, enable_occlusion: bool) {
-        queue.write_buffer(
-            &self.frustum_buffer,
-            0,
-            bytemuck::bytes_of(&camera.frustum()),
-        );
-        let flag: u32 = if enable_occlusion { 1 } else { 0 };
-        queue.write_buffer(&self.params_buffer, 8, bytemuck::bytes_of(&flag));
+    pub fn update(
+        &self,
+        queue: &wgpu::Queue,
+        resources: &Resources,
+        camera: &Camera,
+        enable_occlusion: bool,
+    ) {
+        let uniform = MainCullUniform {
+            planes: camera.frustum(),
+            max_instance_count: resources.primitives.instance_count,
+            mesh_count: resources.meshes.mesh_count,
+            enable_occlusion: if enable_occlusion { 1 } else { 0 },
+            _pad: 0,
+        };
+        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniform));
     }
 
-    pub fn encode(&self, encoder: &mut wgpu_profiler::Scope<wgpu::CommandEncoder>) {
+    pub fn encode(
+        &self,
+        encoder: &mut wgpu_profiler::Scope<wgpu::CommandEncoder>,
+        max_instance_count: u32,
+    ) {
         let wg_size = 64;
-        let group_count = (self.max_instance_count + wg_size - 1) / wg_size;
+        let group_count = (max_instance_count + wg_size - 1) / wg_size;
 
-        let mut pass = encoder.scoped_compute_pass("MainCull Pass");
+        let bind_group = self.bind_group.borrow();
+        let bind_group = bind_group
+            .as_ref()
+            .expect("MainCullPass: missing bind group; call prepare() before encode()");
+
+        let mut pass = encoder.scoped_compute_pass("main_cull.pass");
         pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.set_bind_group(0, bind_group, &[]);
         pass.dispatch_workgroups(group_count, 1, 1);
-    }
-
-    pub fn visibility_history_buffer(&self) -> &wgpu::Buffer {
-        &self.visibility_history_buffer
     }
 }

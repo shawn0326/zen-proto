@@ -1,34 +1,33 @@
-use crate::{camera::Camera, render::visibility_list::VisibilityList};
+use crate::{
+    camera::Camera,
+    render::{visibility_history::VisibilityHistory, visibility_list::VisibilityList},
+    resources::Resources,
+};
+use std::{cell::RefCell, collections::HashMap};
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct OcclusionParams {
-    pub view: glam::Mat4,
-    pub proj: glam::Mat4,
+struct OcclusionCullUniform {
+    view: glam::Mat4,
+    proj: glam::Mat4,
     // x=width, y=height, z=bias, w=slack
-    pub screen_bias: [f32; 4],
+    screen_bias: [f32; 4],
 }
 
 pub struct OcclusionCullPass {
     pipeline: wgpu::ComputePipeline,
-    bgl: wgpu::BindGroupLayout,
-    params_buffer: wgpu::Buffer,
+    bind_group_layout: wgpu::BindGroupLayout,
+    bind_group_cache: RefCell<HashMap<u64, wgpu::BindGroup>>,
+    uniform_buffer: wgpu::Buffer,
 }
 
 impl OcclusionCullPass {
     pub fn new(device: &wgpu::Device) -> Self {
-        use wgpu::util::DeviceExt;
-
-        let params = OcclusionParams {
-            view: glam::Mat4::IDENTITY,
-            proj: glam::Mat4::IDENTITY,
-            screen_bias: [1.0, 1.0, 0.0005, 0.01],
-        };
-
-        let params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("occlusion.params_buffer"),
-            contents: bytemuck::bytes_of(&params),
+        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("occlusion_cull.uniform.buffer"),
+            size: std::mem::size_of::<OcclusionCullUniform>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
 
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -46,8 +45,8 @@ impl OcclusionCullPass {
         // 4 visibility_history (rw storage)
         // 5 hiz (sampled r32float, all mips)
         // 6 params (uniform)
-        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("occlusion.bgl"),
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("occlusion_cull.bind_group_layout"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
@@ -123,13 +122,13 @@ impl OcclusionCullPass {
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("occlusion.pipeline_layout"),
-            bind_group_layouts: &[&bgl],
+            label: Some("occlusion_cull.pipeline_layout"),
+            bind_group_layouts: &[&bind_group_layout],
             push_constant_ranges: &[],
         });
 
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("occlusion.pipeline"),
+            label: Some("occlusion_cull.pipeline"),
             layout: Some(&pipeline_layout),
             module: &module,
             entry_point: Some("main"),
@@ -139,78 +138,86 @@ impl OcclusionCullPass {
 
         Self {
             pipeline,
-            bgl,
-            params_buffer,
+            bind_group_layout,
+            bind_group_cache: RefCell::new(HashMap::new()),
+            uniform_buffer,
         }
     }
 
-    pub fn update_params(
-        &self,
-        queue: &wgpu::Queue,
-        camera: &Camera,
-        width: u32,
-        height: u32,
-        bias: f32,
-        slack: f32,
-    ) {
-        let params = OcclusionParams {
-            view: camera.view(),
-            proj: camera.projection(),
-            screen_bias: [width as f32, height as f32, bias, slack],
-        };
-        queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
-    }
-
-    pub fn encode_indirect(
+    pub fn prepare(
         &self,
         device: &wgpu::Device,
-        encoder: &mut wgpu_profiler::Scope<wgpu::CommandEncoder>,
-        visibility_list: &VisibilityList,
-        instance_buffer: &wgpu::Buffer,
-        mesh_table_buffer: &wgpu::Buffer,
-        visibility_history_buffer: &wgpu::Buffer,
+        resources: &Resources,
+        visibility_history: &VisibilityHistory,
         hiz_view: &wgpu::TextureView,
+        list: &VisibilityList,
     ) {
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("occlusion.bind_group"),
-            layout: &self.bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: visibility_list
-                        .visible_instances_buffer()
-                        .as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: instance_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: mesh_table_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: visibility_list.visible_count_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: visibility_history_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: wgpu::BindingResource::TextureView(hiz_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: self.params_buffer.as_entire_binding(),
-                },
-            ],
+        let mut cache = self.bind_group_cache.borrow_mut();
+        cache.entry(list.id()).or_insert_with(|| {
+            let label = format!("occlusion_cull.{}.bind_group", list.label());
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(&label),
+                layout: &self.bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: list.visible_instances_buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: resources.primitives.instance_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: resources.meshes.mesh_table_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: list.visible_count_buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: visibility_history.buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: wgpu::BindingResource::TextureView(hiz_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: self.uniform_buffer.as_entire_binding(),
+                    },
+                ],
+            })
         });
+    }
 
-        let mut pass = encoder.scoped_compute_pass("OcclusionCull Pass");
+    pub fn clear_cache(&self) {
+        self.bind_group_cache.borrow_mut().clear();
+    }
+
+    pub fn update(&self, queue: &wgpu::Queue, camera: &Camera, width: u32, height: u32) {
+        let params = OcclusionCullUniform {
+            view: camera.view(),
+            proj: camera.projection(),
+            screen_bias: [width as f32, height as f32, 0.0001, 0.0],
+        };
+        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&params));
+    }
+
+    pub fn encode(
+        &self,
+        encoder: &mut wgpu_profiler::Scope<wgpu::CommandEncoder>,
+        list: &VisibilityList,
+    ) {
+        let bind_group_cache = self.bind_group_cache.borrow();
+        let bind_group = bind_group_cache
+            .get(&list.id())
+            .expect("OcclusionCullPass: missing bind group; call prepare() before encode()");
+
+        let mut pass = encoder.scoped_compute_pass("occlusion_cull.pass");
         pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &bind_group, &[]);
-        pass.dispatch_workgroups_indirect(visibility_list.dispatch_args_buffer(), 0);
+        pass.set_bind_group(0, bind_group, &[]);
+        pass.dispatch_workgroups_indirect(list.dispatch_args_buffer(), 0);
     }
 }

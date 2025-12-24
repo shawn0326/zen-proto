@@ -9,9 +9,9 @@ const UNIFORM_SIZE_BYTES: u32 = 256;
 const MAX_UNIFORM_COUNT: u32 = 2;
 
 pub struct DrawPass {
-    pub pipeline: wgpu::RenderPipeline,
-    pub bind_group: wgpu::BindGroup,
-    pub camera_buffer: wgpu::Buffer,
+    pipeline: wgpu::RenderPipeline,
+    bind_group: wgpu::BindGroup,
+    camera_buffer: wgpu::Buffer,
 }
 
 impl DrawPass {
@@ -21,7 +21,7 @@ impl DrawPass {
         resources: &Resources,
     ) -> Self {
         let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("draw.camera_buffer"),
+            label: Some("draw.camera.buffer"),
             size: (UNIFORM_SIZE_BYTES * MAX_UNIFORM_COUNT) as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
@@ -33,8 +33,8 @@ impl DrawPass {
         });
 
         // 绑定：顶点(storage)、实例(storage)、可见列表(storage)
-        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("draw.bgl"),
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("draw.bind_group_layout"),
             entries: &[
                 // vertices
                 wgpu::BindGroupLayoutEntry {
@@ -96,7 +96,7 @@ impl DrawPass {
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("draw.bind_group"),
-            layout: &bgl,
+            layout: &bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -123,7 +123,7 @@ impl DrawPass {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("draw.pipeline_layout"),
-            bind_group_layouts: &[&bgl],
+            bind_group_layouts: &[&bind_group_layout],
             push_constant_ranges: &[],
         });
 
@@ -210,7 +210,7 @@ impl DrawPass {
         let mut render_pass = encoder.scoped_render_pass(
             "DrawPass RenderPass",
             wgpu::RenderPassDescriptor {
-                label: Some("draw.render_pass"),
+                label: Some("draw.pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: target_view,
                     resolve_target: None,

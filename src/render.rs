@@ -5,6 +5,7 @@ mod hiz_generate_pass;
 mod hiz_texture;
 mod main_cull_pass;
 mod occlusion_cull_pass;
+mod visibility_history;
 mod visibility_list;
 
 use crate::camera::Camera;
@@ -19,6 +20,7 @@ use hiz_generate_pass::HiZGeneratePass;
 use hiz_texture::HiZTexture;
 use main_cull_pass::MainCullPass;
 use occlusion_cull_pass::OcclusionCullPass;
+use visibility_history::VisibilityHistory;
 use visibility_list::VisibilityList;
 use wgpu_profiler::GpuProfilerSettings;
 
@@ -137,15 +139,20 @@ impl RenderContext {
 }
 
 pub struct DefaultRenderer {
-    pub resources: Resources,
+    resources: Resources,
+
     list_a: VisibilityList,
     list_b: VisibilityList,
-    pub main_cull_pass: MainCullPass,
-    pub dispatch_prepare_pass: DispatchPreparePass,
-    pub draw_prepare_pass: DrawPreparePass,
-    pub hiz_generate_pass: HiZGeneratePass,
-    pub occlusion_cull_pass: OcclusionCullPass,
-    pub draw_pass: DrawPass,
+
+    visibility_history: VisibilityHistory,
+
+    main_cull_pass: MainCullPass,
+    dispatch_prepare_pass: DispatchPreparePass,
+    draw_prepare_pass: DrawPreparePass,
+    occlusion_cull_pass: OcclusionCullPass,
+    draw_pass: DrawPass,
+    hiz_generate_pass: HiZGeneratePass,
+
     profiler: wgpu_profiler::GpuProfiler,
     need_print_gpu_profile: bool,
 }
@@ -157,61 +164,56 @@ impl DefaultRenderer {
         materials: &[Material],
         primitives: &[Primitive],
     ) -> DefaultRenderer {
-        let resources = Resources::new(&context.device, meshes, materials, primitives);
+        let RenderContext { device, .. } = context;
 
-        let list_a = VisibilityList::new(
-            &context.device,
-            "List_A",
-            resources.primitives.instance_count,
-        );
-        let list_b = VisibilityList::new(
-            &context.device,
-            "List_B",
-            resources.primitives.instance_count,
-        );
+        // buffers
 
-        let main_cull_pass = MainCullPass::new(&context.device, &resources, &list_a, &list_b);
+        let resources = Resources::new(device, meshes, materials, primitives);
 
-        let dispatch_prepare_pass = DispatchPreparePass::new(&context.device);
-        dispatch_prepare_pass.prepare(&context.device, &list_a);
-        dispatch_prepare_pass.prepare(&context.device, &list_b);
+        let list_a = VisibilityList::new(device, "List_A", resources.primitives.instance_count);
+        let list_b = VisibilityList::new(device, "List_B", resources.primitives.instance_count);
 
-        let draw_prepare_pass = DrawPreparePass::new(&context.device);
-        draw_prepare_pass.prepare(
-            &context.device,
-            &resources,
-            &list_a,
-            main_cull_pass.visibility_history_buffer(),
-        );
-        draw_prepare_pass.prepare(
-            &context.device,
-            &resources,
-            &list_b,
-            main_cull_pass.visibility_history_buffer(),
-        );
+        let visibility_history =
+            VisibilityHistory::new(device, resources.primitives.instance_count);
 
-        let draw_pass = DrawPass::new(
-            &context.device,
-            context.surface_configuration.format,
-            &resources,
-        );
+        // passes
 
-        let hiz_generate_pass = HiZGeneratePass::new(&context.device);
-        let occlusion_cull_pass = OcclusionCullPass::new(&context.device);
+        let main_cull_pass = MainCullPass::new(device);
+        main_cull_pass.prepare(device, &resources, &visibility_history, &list_a, &list_b);
+
+        let dispatch_prepare_pass = DispatchPreparePass::new(device);
+        dispatch_prepare_pass.prepare(device, &list_a);
+        dispatch_prepare_pass.prepare(device, &list_b);
+
+        let draw_prepare_pass = DrawPreparePass::new(device);
+        draw_prepare_pass.prepare(device, &resources, &visibility_history, &list_a);
+        draw_prepare_pass.prepare(device, &resources, &visibility_history, &list_b);
+
+        let occlusion_cull_pass = OcclusionCullPass::new(device);
+        let hiz_view = context.hiz_texture.sampled_full_view();
+        occlusion_cull_pass.prepare(device, &resources, &visibility_history, hiz_view, &list_a);
+        occlusion_cull_pass.prepare(device, &resources, &visibility_history, hiz_view, &list_b);
+
+        let draw_pass = DrawPass::new(device, context.surface_configuration.format, &resources);
+
+        let hiz_generate_pass = HiZGeneratePass::new(device);
 
         let profiler =
-            wgpu_profiler::GpuProfiler::new(&context.device, GpuProfilerSettings::default())
-                .unwrap();
+            wgpu_profiler::GpuProfiler::new(device, GpuProfilerSettings::default()).unwrap();
+
+        // assemble
+
         Self {
             resources,
             list_a,
             list_b,
+            visibility_history,
             main_cull_pass,
             dispatch_prepare_pass,
             draw_prepare_pass,
-            hiz_generate_pass,
             occlusion_cull_pass,
             draw_pass,
+            hiz_generate_pass,
             profiler,
             need_print_gpu_profile: false,
         }
@@ -235,20 +237,22 @@ impl DefaultRenderer {
         {
             let mut scope = self.profiler.scope("Frame", &mut encoder);
 
-            self.list_a.reset(&context.queue);
-            self.list_b.reset(&context.queue);
+            let resources = &self.resources;
+            let RenderContext { queue, .. } = context;
+            let max_instance_count = resources.primitives.instance_count;
 
-            let main_cull_pass = &self.main_cull_pass;
-            main_cull_pass.prepare(&context.queue, &camera, enable_occlusion_culling);
-            main_cull_pass.encode(&mut scope);
+            self.list_a.reset(queue);
+            self.list_b.reset(queue);
+
+            self.main_cull_pass
+                .update(queue, resources, &camera, enable_occlusion_culling);
+            self.main_cull_pass.encode(&mut scope, max_instance_count);
 
             self.dispatch_prepare_pass.encode(&mut scope, &self.list_a);
-
             self.draw_prepare_pass.encode(&mut scope, &self.list_a);
 
-            let draw_pass = &self.draw_pass;
-            draw_pass.update(&context.queue, &camera, 0);
-            draw_pass.encode(
+            self.draw_pass.update(&queue, &camera, 0);
+            self.draw_pass.encode(
                 &mut scope,
                 &surface_texture
                     .texture
@@ -258,13 +262,14 @@ impl DefaultRenderer {
                     .create_view(&wgpu::TextureViewDescriptor::default()),
                 &self.resources.meshes.index_buffer,
                 &self.list_a,
-                self.resources.primitives.instance_count,
+                max_instance_count,
                 true,
                 true,
                 0,
             );
 
             if enable_occlusion_culling {
+                // TODO move this to hiz_generate_pass
                 if self.hiz_generate_pass.needs_rebuild(&context.hiz_texture) {
                     let depth_for_hiz_view =
                         context
@@ -285,6 +290,24 @@ impl DefaultRenderer {
                         &depth_for_hiz_view,
                         &context.hiz_texture,
                     );
+
+                    let hiz_view = context.hiz_texture.sampled_full_view();
+
+                    self.occlusion_cull_pass.clear_cache();
+                    self.occlusion_cull_pass.prepare(
+                        &context.device,
+                        &resources,
+                        &self.visibility_history,
+                        hiz_view,
+                        &self.list_a,
+                    );
+                    self.occlusion_cull_pass.prepare(
+                        &context.device,
+                        &resources,
+                        &self.visibility_history,
+                        hiz_view,
+                        &self.list_b,
+                    );
                 }
 
                 self.hiz_generate_pass
@@ -294,27 +317,17 @@ impl DefaultRenderer {
 
                 // Occlusion cull List B: update visibility_history based on Hi-Z.
                 // (History for List A will be handled later.)
-                self.occlusion_cull_pass.update_params(
+                self.occlusion_cull_pass.update(
                     &context.queue,
                     &camera,
                     context.surface_configuration.width,
                     context.surface_configuration.height,
-                    0.0001,
-                    0.0,
                 );
-                self.occlusion_cull_pass.encode_indirect(
-                    &context.device,
-                    &mut scope,
-                    &self.list_b,
-                    &self.resources.primitives.instance_buffer,
-                    &self.resources.meshes.mesh_table_buffer,
-                    main_cull_pass.visibility_history_buffer(),
-                    context.hiz_texture.sampled_full_view(),
-                );
+                self.occlusion_cull_pass.encode(&mut scope, &self.list_b);
 
                 self.draw_prepare_pass.encode(&mut scope, &self.list_b);
 
-                draw_pass.encode(
+                self.draw_pass.encode(
                     &mut scope,
                     &surface_texture
                         .texture
@@ -324,7 +337,7 @@ impl DefaultRenderer {
                         .create_view(&wgpu::TextureViewDescriptor::default()),
                     &self.resources.meshes.index_buffer,
                     &self.list_b,
-                    self.resources.primitives.instance_count,
+                    max_instance_count,
                     false,
                     false,
                     0,
@@ -335,15 +348,7 @@ impl DefaultRenderer {
 
                 // Occlusion cull List B: update visibility_history based on Hi-Z.
                 // (History for List A will be handled later.)
-                self.occlusion_cull_pass.encode_indirect(
-                    &context.device,
-                    &mut scope,
-                    &self.list_a,
-                    &self.resources.primitives.instance_buffer,
-                    &self.resources.meshes.mesh_table_buffer,
-                    main_cull_pass.visibility_history_buffer(),
-                    context.hiz_texture.sampled_full_view(),
-                );
+                self.occlusion_cull_pass.encode(&mut scope, &self.list_a);
             }
 
             if let Some(debug_camera) = debug_camera {
@@ -359,7 +364,7 @@ impl DefaultRenderer {
                         .create_view(&wgpu::TextureViewDescriptor::default()),
                     &self.resources.meshes.index_buffer,
                     &self.list_a,
-                    self.resources.primitives.instance_count,
+                    max_instance_count,
                     true,
                     true,
                     1,
@@ -375,7 +380,7 @@ impl DefaultRenderer {
                         .create_view(&wgpu::TextureViewDescriptor::default()),
                     &self.resources.meshes.index_buffer,
                     &self.list_b,
-                    self.resources.primitives.instance_count,
+                    max_instance_count,
                     false,
                     false,
                     1,

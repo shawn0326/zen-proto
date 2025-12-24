@@ -205,10 +205,6 @@ impl HiZGeneratePass {
         self.cached_height = hiz.height();
     }
 
-    pub fn mip_level_count(&self) -> u32 {
-        self.cached_mip_levels
-    }
-
     pub fn needs_rebuild(&self, hiz: &HiZTexture) -> bool {
         self.depth_to_mip0_bg.is_none()
             || self.cached_mip_levels != hiz.mip_level_count()

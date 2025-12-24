@@ -19,7 +19,6 @@ struct DrawIndexedIndirectArgs {
 pub struct VisibilityList {
     id: u64,
     label: String,
-    max_instance_count: u32,
     visible_instances: wgpu::Buffer,
     visible_count: wgpu::Buffer,
     dispatch_args: wgpu::Buffer,
@@ -79,7 +78,6 @@ impl VisibilityList {
                 hasher.finish()
             },
             label: label.to_string(),
-            max_instance_count,
             visible_instances,
             visible_count,
             dispatch_args,
@@ -94,10 +92,6 @@ impl VisibilityList {
 
     pub fn label(&self) -> &str {
         &self.label
-    }
-
-    pub fn max_instance_count(&self) -> u32 {
-        self.max_instance_count
     }
 
     pub fn visible_instances_buffer(&self) -> &wgpu::Buffer {
