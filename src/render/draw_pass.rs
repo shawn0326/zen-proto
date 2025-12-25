@@ -2,6 +2,7 @@ use crate::camera::Camera;
 use crate::material::Material;
 use crate::mesh::Vertex;
 use crate::primitive::Primitive;
+use crate::render::render_target::RenderTargetContext;
 use crate::render::visibility_list::VisibilityList;
 use crate::resources::Resources;
 
@@ -182,8 +183,7 @@ impl DrawPass {
     pub fn encode(
         &self,
         encoder: &mut wgpu::CommandEncoder,
-        target_view: &wgpu::TextureView,
-        depth_view: &wgpu::TextureView,
+        target_context: &RenderTargetContext,
         index_buffer: &wgpu::Buffer,
         list: &VisibilityList,
         max_count: u32,
@@ -210,7 +210,7 @@ impl DrawPass {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some(&format!("draw.{}.pass", list.label())),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: target_view,
+                view: &target_context.color_view,
                 resolve_target: None,
                 depth_slice: None,
                 ops: wgpu::Operations {
@@ -219,7 +219,7 @@ impl DrawPass {
                 },
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: depth_view,
+                view: &target_context.depth_stencil_view,
                 depth_ops: Some(wgpu::Operations {
                     load: depth_load,
                     store: wgpu::StoreOp::Store,

@@ -5,6 +5,7 @@ mod hiz_generate_pass;
 mod hiz_texture;
 mod main_cull_pass;
 mod occlusion_cull_pass;
+mod render_target;
 mod visibility_history;
 mod visibility_list;
 
@@ -20,6 +21,7 @@ use hiz_generate_pass::HiZGeneratePass;
 use hiz_texture::HiZTexture;
 use main_cull_pass::MainCullPass;
 use occlusion_cull_pass::OcclusionCullPass;
+pub use render_target::RenderTarget;
 use visibility_history::VisibilityHistory;
 use visibility_list::VisibilityList;
 
@@ -51,90 +53,9 @@ pub async fn request_device_and_target(
         .await
         .unwrap();
 
-    let surface_configuration = wgpu::SurfaceConfiguration {
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        format: wgpu::TextureFormat::Rgba8UnormSrgb,
-        width: 800,
-        height: 600,
-        present_mode: wgpu::PresentMode::Mailbox,
-        alpha_mode: wgpu::CompositeAlphaMode::Auto,
-        view_formats: vec![],
-        desired_maximum_frame_latency: 2,
-    };
-
-    surface.configure(&device, &surface_configuration);
-
-    let depth_stencil_texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("depth_stencil_texture"),
-        size: wgpu::Extent3d {
-            width: surface_configuration.width,
-            height: surface_configuration.height,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Depth32Float,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-        view_formats: &[],
-    });
-
-    let hiz_texture = HiZTexture::new(
-        &device,
-        surface_configuration.width,
-        surface_configuration.height,
-    );
-
-    let target = RenderTarget {
-        surface,
-        surface_configuration,
-        depth_stencil_texture,
-        hiz_texture,
-    };
+    let target = RenderTarget::new(&device, surface);
 
     (device, queue, target)
-}
-
-pub struct RenderTarget {
-    surface: wgpu::Surface<'static>,
-    surface_configuration: wgpu::SurfaceConfiguration,
-    depth_stencil_texture: wgpu::Texture,
-    hiz_texture: HiZTexture,
-}
-
-impl RenderTarget {
-    pub fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
-        if width == 0 || height == 0 {
-            return;
-        }
-
-        if self.surface_configuration.width == width && self.surface_configuration.height == height
-        {
-            return;
-        }
-
-        self.surface_configuration.width = width;
-        self.surface_configuration.height = height;
-
-        self.surface.configure(device, &self.surface_configuration);
-
-        self.depth_stencil_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("depth_stencil_texture"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-
-        self.hiz_texture = HiZTexture::new(device, width, height);
-    }
 }
 
 pub struct DefaultRenderer {
@@ -144,6 +65,8 @@ pub struct DefaultRenderer {
     list_b: VisibilityList,
 
     visibility_history: VisibilityHistory,
+
+    hiz_texture: HiZTexture,
 
     main_cull_pass: MainCullPass,
     dispatch_prepare_pass: DispatchPreparePass,
@@ -171,6 +94,9 @@ impl DefaultRenderer {
         let visibility_history =
             VisibilityHistory::new(device, resources.primitives.instance_count);
 
+        let hiz_texture = HiZTexture::new(device, target.width(), target.height());
+        let hiz_view = hiz_texture.sampled_full_view();
+
         // passes
 
         let main_cull_pass = MainCullPass::new(device);
@@ -185,13 +111,13 @@ impl DefaultRenderer {
         draw_prepare_pass.prepare(device, &resources, &visibility_history, &list_b);
 
         let occlusion_cull_pass = OcclusionCullPass::new(device);
-        let hiz_view = target.hiz_texture.sampled_full_view();
         occlusion_cull_pass.prepare(device, &resources, &visibility_history, hiz_view, &list_a);
         occlusion_cull_pass.prepare(device, &resources, &visibility_history, hiz_view, &list_b);
 
-        let draw_pass = DrawPass::new(device, target.surface_configuration.format, &resources);
+        let draw_pass = DrawPass::new(device, target.format(), &resources);
 
-        let hiz_generate_pass = HiZGeneratePass::new(device);
+        let mut hiz_generate_pass = HiZGeneratePass::new(device);
+        hiz_generate_pass.prepare(device, target.depth_for_hiz_view(), &hiz_texture);
 
         // assemble
 
@@ -200,6 +126,7 @@ impl DefaultRenderer {
             list_a,
             list_b,
             visibility_history,
+            hiz_texture,
             main_cull_pass,
             dispatch_prepare_pass,
             draw_prepare_pass,
@@ -217,11 +144,28 @@ impl DefaultRenderer {
         camera: Camera,
         debug_camera: Option<Camera>,
         enable_occlusion_culling: bool,
+        target_changed: bool,
     ) {
         let resources = &self.resources;
         let max_instance_count = resources.primitives.instance_count;
 
-        let surface_texture = target.surface.get_current_texture().unwrap();
+        let target_context = target.get_target_context();
+
+        let target_context = match target_context {
+            Ok(context) => context,
+            Err(wgpu::SurfaceError::Lost) => {
+                println!("Surface lost");
+                return;
+            }
+            Err(wgpu::SurfaceError::OutOfMemory) => {
+                println!("Out of memory");
+                return;
+            }
+            Err(e) => {
+                println!("Failed to acquire next swap chain texture: {:?}", e);
+                return;
+            }
+        };
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder"),
@@ -241,12 +185,7 @@ impl DefaultRenderer {
         self.draw_pass.update(&queue, &camera, 0);
         self.draw_pass.encode(
             &mut encoder,
-            &surface_texture
-                .texture
-                .create_view(&wgpu::TextureViewDescriptor::default()),
-            &target
-                .depth_stencil_texture
-                .create_view(&wgpu::TextureViewDescriptor::default()),
+            &target_context,
             &self.resources.meshes.index_buffer,
             &self.list_a,
             max_instance_count,
@@ -256,29 +195,12 @@ impl DefaultRenderer {
         );
 
         if enable_occlusion_culling {
-            // TODO move this to hiz_generate_pass
-            if self.hiz_generate_pass.needs_rebuild(&target.hiz_texture) {
-                let depth_for_hiz_view =
-                    target
-                        .depth_stencil_texture
-                        .create_view(&wgpu::TextureViewDescriptor {
-                            label: Some("depth_for_hiz_view"),
-                            format: Some(wgpu::TextureFormat::Depth32Float),
-                            dimension: Some(wgpu::TextureViewDimension::D2),
-                            aspect: wgpu::TextureAspect::DepthOnly,
-                            base_mip_level: 0,
-                            mip_level_count: Some(1),
-                            base_array_layer: 0,
-                            array_layer_count: Some(1),
-                            usage: Some(wgpu::TextureUsages::TEXTURE_BINDING),
-                        });
-                self.hiz_generate_pass.rebuild_bind_groups(
-                    device,
-                    &depth_for_hiz_view,
-                    &target.hiz_texture,
-                );
+            if target_changed {
+                let hiz_texture = HiZTexture::new(device, target.width(), target.height());
+                let hiz_view = hiz_texture.sampled_full_view();
 
-                let hiz_view = target.hiz_texture.sampled_full_view();
+                self.hiz_generate_pass
+                    .prepare(device, target.depth_for_hiz_view(), &hiz_texture);
 
                 self.occlusion_cull_pass.clear_cache();
                 self.occlusion_cull_pass.prepare(
@@ -295,34 +217,27 @@ impl DefaultRenderer {
                     hiz_view,
                     &self.list_b,
                 );
+
+                self.hiz_texture = hiz_texture;
             }
 
             self.hiz_generate_pass
-                .encode(&mut encoder, &target.hiz_texture);
+                .encode(&mut encoder, &self.hiz_texture);
 
             self.dispatch_prepare_pass
                 .encode(&mut encoder, &self.list_b);
 
             // Occlusion cull List B: update visibility_history based on Hi-Z.
             // (History for List A will be handled later.)
-            self.occlusion_cull_pass.update(
-                &queue,
-                &camera,
-                target.surface_configuration.width,
-                target.surface_configuration.height,
-            );
+            self.occlusion_cull_pass
+                .update(&queue, &camera, target.width(), target.height());
             self.occlusion_cull_pass.encode(&mut encoder, &self.list_b);
 
             self.draw_prepare_pass.encode(&mut encoder, &self.list_b);
 
             self.draw_pass.encode(
                 &mut encoder,
-                &surface_texture
-                    .texture
-                    .create_view(&wgpu::TextureViewDescriptor::default()),
-                &target
-                    .depth_stencil_texture
-                    .create_view(&wgpu::TextureViewDescriptor::default()),
+                &target_context,
                 &self.resources.meshes.index_buffer,
                 &self.list_b,
                 max_instance_count,
@@ -332,7 +247,7 @@ impl DefaultRenderer {
             );
 
             self.hiz_generate_pass
-                .encode(&mut encoder, &target.hiz_texture);
+                .encode(&mut encoder, &self.hiz_texture);
 
             // Occlusion cull List B: update visibility_history based on Hi-Z.
             // (History for List A will be handled later.)
@@ -344,12 +259,7 @@ impl DefaultRenderer {
 
             self.draw_pass.encode(
                 &mut encoder,
-                &surface_texture
-                    .texture
-                    .create_view(&wgpu::TextureViewDescriptor::default()),
-                &target
-                    .depth_stencil_texture
-                    .create_view(&wgpu::TextureViewDescriptor::default()),
+                &target_context,
                 &self.resources.meshes.index_buffer,
                 &self.list_a,
                 max_instance_count,
@@ -360,12 +270,7 @@ impl DefaultRenderer {
 
             self.draw_pass.encode(
                 &mut encoder,
-                &surface_texture
-                    .texture
-                    .create_view(&wgpu::TextureViewDescriptor::default()),
-                &target
-                    .depth_stencil_texture
-                    .create_view(&wgpu::TextureViewDescriptor::default()),
+                &target_context,
                 &self.resources.meshes.index_buffer,
                 &self.list_b,
                 max_instance_count,
@@ -377,6 +282,6 @@ impl DefaultRenderer {
 
         queue.submit(Some(encoder.finish()));
 
-        surface_texture.present();
+        target_context.surface_texture.present();
     }
 }

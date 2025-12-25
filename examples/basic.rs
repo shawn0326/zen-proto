@@ -119,7 +119,7 @@ impl Example for Demo {
     }
 
     fn resize(&mut self, width: u32, height: u32) {
-        self.target.resize(&self.device, width, height);
+        self.target.resize(width, height);
     }
 
     fn update(&mut self) {}
@@ -130,13 +130,15 @@ impl Example for Demo {
         } else {
             None
         };
+        let target_changed = self.target.apply_pending_resize(&self.device);
         self.renderer.render(
             &self.device,
             &self.queue,
-            &mut self.target,
+            &self.target,
             self.camera,
             debug_camera,
             self.enable_occlusion_culling,
+            target_changed,
         );
     }
 

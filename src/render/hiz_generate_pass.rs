@@ -151,7 +151,7 @@ impl HiZGeneratePass {
     /// Call this after:
     /// - depth texture view changed (resize / recreated)
     /// - HiZ texture recreated (resize)
-    pub fn rebuild_bind_groups(
+    pub fn prepare(
         &mut self,
         device: &wgpu::Device,
         depth_view: &wgpu::TextureView,
@@ -205,21 +205,20 @@ impl HiZGeneratePass {
         self.cached_height = hiz.height();
     }
 
-    pub fn needs_rebuild(&self, hiz: &HiZTexture) -> bool {
-        self.depth_to_mip0_bg.is_none()
-            || self.cached_mip_levels != hiz.mip_level_count()
-            || self.cached_width != hiz.width()
-            || self.cached_height != hiz.height()
-    }
-
     pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, hiz: &HiZTexture) {
-        // 保险：如果没 rebuild 或缓存不匹配，直接放弃
         if self.depth_to_mip0_bg.is_none()
             || self.cached_mip_levels != hiz.mip_level_count()
             || self.cached_width != hiz.width()
             || self.cached_height != hiz.height()
         {
-            return;
+            panic!(
+                "HiZGeneratePass encode called without matching prepare: {} mip levels, {}x{} cached vs {}x{} current",
+                self.cached_mip_levels,
+                self.cached_width,
+                self.cached_height,
+                hiz.width(),
+                hiz.height(),
+            );
         }
 
         // Pass 1: depth -> HiZ mip0
