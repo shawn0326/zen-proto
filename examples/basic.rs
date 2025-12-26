@@ -24,6 +24,8 @@ struct Demo {
     camera_controller: OrbitCameraController,
     use_debug_camera: bool,
     enable_occlusion_culling: bool,
+
+    frame_index: u64,
 }
 
 impl Example for Demo {
@@ -115,6 +117,8 @@ impl Example for Demo {
             camera_controller,
             use_debug_camera: false,
             enable_occlusion_culling: true,
+
+            frame_index: 0,
         }
     }
 
@@ -125,6 +129,12 @@ impl Example for Demo {
     fn update(&mut self) {}
 
     fn render(&mut self) {
+        // Low-frequency stats: request once per ~120 frames, print when ready.
+        self.frame_index += 1;
+        if self.frame_index % 120 == 0 {
+            self.renderer.request_render_stats();
+        }
+
         let debug_camera = if self.use_debug_camera {
             Some(self.debug_camera)
         } else {
@@ -140,6 +150,19 @@ impl Example for Demo {
             self.enable_occlusion_culling,
             target_changed,
         );
+
+        if let Some(stats) = self.renderer.take_render_stats(&self.device) {
+            println!(
+                "Render stats: total={} main_cull_visible={} drawn={} (A: vis={} draw={} | B: vis={} draw={})",
+                stats.total_instances,
+                stats.visible_after_main_cull,
+                stats.drawn_instances,
+                stats.list_a_visible,
+                stats.list_a_drawn,
+                stats.list_b_visible,
+                stats.list_b_drawn,
+            );
+        }
     }
 
     fn mouse_drag(&mut self, dx: f32, dy: f32) {

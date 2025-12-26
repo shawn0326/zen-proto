@@ -5,6 +5,7 @@ mod hiz_generate_pass;
 mod hiz_texture;
 mod main_cull_pass;
 mod occlusion_cull_pass;
+mod render_stats;
 mod render_target;
 mod visibility_history;
 mod visibility_list;
@@ -21,6 +22,8 @@ use hiz_generate_pass::HiZGeneratePass;
 use hiz_texture::HiZTexture;
 use main_cull_pass::MainCullPass;
 use occlusion_cull_pass::OcclusionCullPass;
+pub use render_stats::RenderStats;
+use render_stats::RenderStatsReadback;
 pub use render_target::RenderTarget;
 use visibility_history::VisibilityHistory;
 use visibility_list::VisibilityList;
@@ -74,6 +77,8 @@ pub struct DefaultRenderer {
     occlusion_cull_pass: OcclusionCullPass,
     draw_pass: DrawPass,
     hiz_generate_pass: HiZGeneratePass,
+
+    stats_readback: RenderStatsReadback,
 }
 
 impl DefaultRenderer {
@@ -133,6 +138,8 @@ impl DefaultRenderer {
             occlusion_cull_pass,
             draw_pass,
             hiz_generate_pass,
+
+            stats_readback: RenderStatsReadback::new(device),
         }
     }
 
@@ -280,8 +287,37 @@ impl DefaultRenderer {
             );
         }
 
+        // Optional low-frequency stats readback (copies 4x u32 into a small staging buffer).
+        self.stats_readback.encode_if_requested(
+            &mut encoder,
+            enable_occlusion_culling,
+            self.list_a.visible_count_buffer(),
+            self.list_a.draw_count_buffer(),
+            self.list_b.visible_count_buffer(),
+            self.list_b.draw_count_buffer(),
+        );
+
         queue.submit(Some(encoder.finish()));
 
+        // Start mapping after submit, then progress mapping if needed.
+        self.stats_readback.after_submit(device);
+
         target_context.surface_texture.present();
+    }
+
+    /// Request a low-overhead GPU->CPU readback of render counters.
+    ///
+    /// The readback is performed on the *next* `render()` call, and can be retrieved later via
+    /// `take_render_stats()`.
+    pub fn request_render_stats(&mut self) {
+        self.stats_readback.request();
+    }
+
+    /// Returns a newly available stats snapshot, if the previously requested readback has finished.
+    ///
+    /// This is non-blocking; call it every frame (or at your preferred cadence).
+    pub fn take_render_stats(&mut self, device: &wgpu::Device) -> Option<RenderStats> {
+        self.stats_readback
+            .take_ready(device, self.resources.primitives.instance_count)
     }
 }
