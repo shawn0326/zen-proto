@@ -4,3 +4,4 @@ pub mod mesh;
 pub mod primitive;
 pub mod render;
 pub mod resources;
+pub mod texture;

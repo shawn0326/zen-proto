@@ -106,7 +106,7 @@ impl Example for Demo {
             });
         }
 
-        let renderer = DefaultRenderer::new(&device, &target, &meshes, &materials, &primitives);
+        let renderer = DefaultRenderer::new(&device, &queue, &target, &meshes, &materials, &primitives);
         Demo {
             device,
             queue,
