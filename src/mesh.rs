@@ -4,6 +4,8 @@ pub struct Vertex {
     pub position: glam::Vec4,
     pub normal: glam::Vec4,
     pub color: glam::Vec4,
+    pub uv: glam::Vec2,
+    pub _pad: glam::Vec2,
 }
 
 pub struct Mesh {
@@ -122,16 +124,22 @@ pub fn create_triangle_mesh() -> Mesh {
             position: glam::Vec4::new(-0.5, -0.5, 0.0, 1.0),
             normal,
             color: glam::Vec4::new(1.0, 1.0, 1.0, 1.0),
+            uv: glam::Vec2::new(0.0, 0.0),
+            _pad: glam::Vec2::ZERO,
         },
         Vertex {
             position: glam::Vec4::new(0.5, -0.5, 0.0, 1.0),
             normal,
             color: glam::Vec4::new(1.0, 1.0, 1.0, 1.0),
+            uv: glam::Vec2::new(1.0, 0.0),
+            _pad: glam::Vec2::ZERO,
         },
         Vertex {
             position: glam::Vec4::new(0.0, 0.5, 0.0, 1.0),
             normal,
             color: glam::Vec4::new(1.0, 1.0, 1.0, 1.0),
+            uv: glam::Vec2::new(0.5, 1.0),
+            _pad: glam::Vec2::ZERO,
         },
     ];
 
@@ -215,11 +223,20 @@ pub fn create_box_mesh() -> Mesh {
 
     for (face_idx, (normal, positions)) in faces.iter().enumerate() {
         let base = (face_idx * 4) as u16;
-        for pos in positions {
+        for (i, pos) in positions.iter().enumerate() {
+            let uv = match i {
+                0 => glam::Vec2::new(0.0, 0.0),
+                1 => glam::Vec2::new(0.0, 1.0),
+                2 => glam::Vec2::new(1.0, 1.0),
+                _ => glam::Vec2::new(1.0, 0.0),
+            };
+
             vertices.push(Vertex {
                 position: glam::Vec4::new(pos[0], pos[1], pos[2], 1.0),
                 normal: *normal,
                 color: white,
+                uv,
+                _pad: glam::Vec2::ZERO,
             });
         }
         // 两个三角形
@@ -277,6 +294,8 @@ pub fn create_sphere_mesh(subdivisions: u32) -> Mesh {
                 position: glam::Vec4::new(radius * x, radius * y, radius * z, 1.0),
                 normal,
                 color: white,
+                uv: glam::Vec2::new(u, 1.0 - v),
+                _pad: glam::Vec2::ZERO,
             });
         }
     }

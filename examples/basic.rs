@@ -5,6 +5,7 @@ use common::{
     run,
 };
 use rand::Rng;
+use std::path::Path;
 use std::sync::Arc;
 use winit::window::Window;
 use zen_proto::{
@@ -12,6 +13,7 @@ use zen_proto::{
     material, mesh,
     primitive::Primitive,
     render::{DefaultRenderer, RenderTarget, request_device_and_target},
+    texture::Texture,
 };
 
 struct Demo {
@@ -64,9 +66,15 @@ impl Example for Demo {
         meshes.push(mesh::create_box_mesh());
         meshes.push(mesh::create_sphere_mesh(6));
 
+        let textures = vec![
+            Texture::white_1x1(),
+            load_texture_from_assets("uv_grid_opengl.jpg"),
+        ];
+        let textures_count = textures.len() as u32;
+
         let mut materials = vec![];
         let mut rng = rand::rng();
-        for _ in 0..20 {
+        for i in 0..20 {
             let hue = rng.random::<f32>() * 360.0;
             let saturation = 1.0_f32;
             let lightness = 0.5_f32;
@@ -87,6 +95,8 @@ impl Example for Demo {
 
             materials.push(material::Material {
                 color: glam::Vec4::new(r + m, g + m, b + m, 1.0),
+                texture_id: i % textures_count,
+                _pad: [0; 3],
             });
         }
 
@@ -106,7 +116,15 @@ impl Example for Demo {
             });
         }
 
-        let renderer = DefaultRenderer::new(&device, &queue, &target, &meshes, &materials, &primitives);
+        let renderer = DefaultRenderer::new(
+            &device,
+            &queue,
+            &target,
+            &meshes,
+            &materials,
+            &primitives,
+            &textures,
+        );
         Demo {
             device,
             queue,
@@ -195,4 +213,18 @@ impl Example for Demo {
 
 fn main() {
     run::<Demo>(Some(120));
+}
+
+fn load_texture_from_assets(name: &str) -> Texture {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let path = manifest_dir.join("assets").join("textures").join(name);
+    let img = image::open(&path).expect("Failed to load asset texture");
+    let rgba = img.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    Texture {
+        width,
+        height,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        pixels: rgba.into_raw(),
+    }
 }

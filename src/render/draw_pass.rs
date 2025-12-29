@@ -12,6 +12,7 @@ const MAX_UNIFORM_COUNT: u32 = 2;
 pub struct DrawPass {
     pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
+    texture_bind_group: wgpu::BindGroup,
     camera_buffer: wgpu::Buffer,
 }
 
@@ -122,9 +123,56 @@ impl DrawPass {
             ],
         });
 
+        let max_texture_count = resources
+            .textures
+            .max_texture_count()
+            .min(device.limits().max_binding_array_elements_per_shader_stage);
+
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("draw.textures.bindless_bgl"),
+                entries: &[
+                    // bindless textures: texture_2d<f32> textures[]
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: std::num::NonZeroU32::new(max_texture_count),
+                    },
+                    // shared sampler
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+
+        let view_refs: Vec<&wgpu::TextureView> =
+            resources.textures.texture_views().iter().collect();
+        let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("draw.textures.bindless_bg"),
+            layout: &texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureViewArray(&view_refs),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(resources.textures.sampler()),
+                },
+            ],
+        });
+
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("draw.pipeline_layout"),
-            bind_group_layouts: &[&bind_group_layout],
+            bind_group_layouts: &[&bind_group_layout, &texture_bind_group_layout],
             push_constant_ranges: &[],
         });
 
@@ -166,6 +214,7 @@ impl DrawPass {
         Self {
             pipeline,
             bind_group,
+            texture_bind_group,
             camera_buffer,
         }
     }
@@ -231,6 +280,7 @@ impl DrawPass {
 
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_bind_group(0, &self.bind_group, &[offset * UNIFORM_SIZE_BYTES]);
+        render_pass.set_bind_group(1, &self.texture_bind_group, &[]);
         render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
 
         render_pass.multi_draw_indexed_indirect_count(

@@ -15,6 +15,7 @@ use crate::material::Material;
 use crate::mesh::Mesh;
 use crate::primitive::Primitive;
 use crate::resources::Resources;
+use crate::texture::Texture;
 use dispatch_prepare_pass::DispatchPreparePass;
 use draw_pass::DrawPass;
 use draw_prepare_pass::DrawPreparePass;
@@ -108,10 +109,11 @@ impl DefaultRenderer {
         meshes: &[Mesh],
         materials: &[Material],
         primitives: &[Primitive],
+        textures: &[Texture],
     ) -> DefaultRenderer {
         // buffers
 
-        let resources = Resources::new(device, queue, meshes, materials, primitives);
+        let resources = Resources::new(device, queue, meshes, materials, primitives, textures);
 
         let list_a = VisibilityList::new(device, "list_a", resources.primitives.instance_count);
         let list_b = VisibilityList::new(device, "list_b", resources.primitives.instance_count);
