@@ -1,7 +1,7 @@
 use crate::camera::Camera;
 use crate::instance::Instance;
 use crate::material::Material;
-use crate::mesh::Vertex;
+use crate::mesh::VertexPacked;
 use crate::render::render_target::RenderTargetContext;
 use crate::render::visibility_list::VisibilityList;
 use crate::resources::Resources;
@@ -46,7 +46,7 @@ impl DrawPass {
                         ty: wgpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: Some(
-                            std::num::NonZeroU64::new(std::mem::size_of::<Vertex>() as u64)
+                            std::num::NonZeroU64::new(std::mem::size_of::<VertexPacked>() as u64)
                                 .unwrap(),
                         ),
                     },

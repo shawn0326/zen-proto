@@ -1,11 +1,158 @@
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy)]
 pub struct Vertex {
     pub position: glam::Vec4,
     pub normal: glam::Vec4,
     pub color: glam::Vec4,
     pub uv: glam::Vec2,
-    pub _pad: glam::Vec2,
+}
+
+#[repr(C, align(16))]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct VertexPacked {
+    pub px: f32,
+    pub py: f32,
+    pub pz: f32,
+    pub n_oct: u32, // 法线oct编码（snorm16x2打包到u32）
+    pub uv01: u32,  // UV：unorm16x2打包到u32
+    pub c: u32,     // RGBA8颜色打包到u32
+    pub _pad0: u32, // 显式补齐到32B
+    pub _pad1: u32,
+}
+
+impl VertexPacked {
+    #[inline]
+    fn pack_rgba8(color: glam::Vec4) -> u32 {
+        fn q(x: f32) -> u32 {
+            let x = x.clamp(0.0, 1.0);
+            (x * 255.0 + 0.5) as u32
+        }
+
+        let r = q(color.x);
+        let g = q(color.y);
+        let b = q(color.z);
+        let a = q(color.w);
+        (r & 0xFF) | ((g & 0xFF) << 8) | ((b & 0xFF) << 16) | ((a & 0xFF) << 24)
+    }
+
+    #[inline]
+    fn unpack_rgba8(c: u32) -> glam::Vec4 {
+        let r = ((c >> 0) & 0xFF) as f32 / 255.0;
+        let g = ((c >> 8) & 0xFF) as f32 / 255.0;
+        let b = ((c >> 16) & 0xFF) as f32 / 255.0;
+        let a = ((c >> 24) & 0xFF) as f32 / 255.0;
+        glam::Vec4::new(r, g, b, a)
+    }
+
+    #[inline]
+    fn pack_unorm16x2(uv: glam::Vec2) -> u32 {
+        fn q(x: f32) -> u32 {
+            let x = x.clamp(0.0, 1.0);
+            (x * 65535.0 + 0.5) as u32
+        }
+
+        let u = q(uv.x);
+        let v = q(uv.y);
+        (u & 0xFFFF) | ((v & 0xFFFF) << 16)
+    }
+
+    #[inline]
+    fn unpack_unorm16x2(p: u32) -> glam::Vec2 {
+        let u = (p & 0xFFFF) as f32 / 65535.0;
+        let v = ((p >> 16) & 0xFFFF) as f32 / 65535.0;
+        glam::Vec2::new(u, v)
+    }
+
+    #[inline]
+    fn pack_snorm16(x: f32) -> i16 {
+        let x = x.clamp(-1.0, 1.0);
+        let q = (x * 32767.0).round() as i32;
+        q.clamp(i16::MIN as i32, i16::MAX as i32) as i16
+    }
+
+    #[inline]
+    fn unpack_snorm16(x: i16) -> f32 {
+        // For -32768, this yields slightly less than -1.0; clamp for safety.
+        (x as f32 / 32767.0).clamp(-1.0, 1.0)
+    }
+
+    #[inline]
+    fn oct_encode(n: glam::Vec3) -> glam::Vec2 {
+        let mut n = if n.length_squared() > 0.0 {
+            n.normalize()
+        } else {
+            glam::Vec3::Z
+        };
+        let inv_l1 = 1.0 / (n.x.abs() + n.y.abs() + n.z.abs());
+        n *= inv_l1;
+
+        let mut e = glam::Vec2::new(n.x, n.y);
+        if n.z < 0.0 {
+            let ex = (1.0 - e.y.abs()) * e.x.signum();
+            let ey = (1.0 - e.x.abs()) * e.y.signum();
+            e = glam::Vec2::new(ex, ey);
+        }
+        e
+    }
+
+    #[inline]
+    fn oct_decode(e: glam::Vec2) -> glam::Vec3 {
+        let mut n = glam::Vec3::new(e.x, e.y, 1.0 - e.x.abs() - e.y.abs());
+        if n.z < 0.0 {
+            let ox = (1.0 - n.y.abs()) * n.x.signum();
+            let oy = (1.0 - n.x.abs()) * n.y.signum();
+            n.x = ox;
+            n.y = oy;
+        }
+        if n.length_squared() > 0.0 {
+            n.normalize()
+        } else {
+            glam::Vec3::Z
+        }
+    }
+
+    #[inline]
+    fn pack_normal_oct_snorm16x2(normal_xyz: glam::Vec3) -> u32 {
+        let e = Self::oct_encode(normal_xyz);
+        let sx = Self::pack_snorm16(e.x) as u16 as u32;
+        let sy = Self::pack_snorm16(e.y) as u16 as u32;
+        sx | (sy << 16)
+    }
+
+    #[inline]
+    fn unpack_normal_oct_snorm16x2(packed: u32) -> glam::Vec3 {
+        let sx = (packed & 0xFFFF) as u16 as i16;
+        let sy = ((packed >> 16) & 0xFFFF) as u16 as i16;
+        let e = glam::Vec2::new(Self::unpack_snorm16(sx), Self::unpack_snorm16(sy));
+        Self::oct_decode(e)
+    }
+}
+
+impl From<&Vertex> for VertexPacked {
+    fn from(v: &Vertex) -> Self {
+        let normal_xyz = glam::Vec3::new(v.normal.x, v.normal.y, v.normal.z);
+        Self {
+            px: v.position.x,
+            py: v.position.y,
+            pz: v.position.z,
+            n_oct: Self::pack_normal_oct_snorm16x2(normal_xyz),
+            uv01: Self::pack_unorm16x2(v.uv),
+            c: Self::pack_rgba8(v.color),
+            _pad0: 0,
+            _pad1: 0,
+        }
+    }
+}
+
+impl From<&VertexPacked> for Vertex {
+    fn from(v: &VertexPacked) -> Self {
+        let n = VertexPacked::unpack_normal_oct_snorm16x2(v.n_oct);
+        Vertex {
+            position: glam::Vec4::new(v.px, v.py, v.pz, 1.0),
+            normal: glam::Vec4::new(n.x, n.y, n.z, 0.0),
+            color: VertexPacked::unpack_rgba8(v.c),
+            uv: VertexPacked::unpack_unorm16x2(v.uv01),
+        }
+    }
 }
 
 pub struct Mesh {
@@ -67,7 +214,7 @@ impl MeshStorage {
         let total_vertices: usize = meshes.iter().map(|m| m.vertices.len()).sum();
         let total_indices: usize = meshes.iter().map(|m| m.indices.len()).sum();
 
-        let mut all_vertices: Vec<Vertex> = Vec::with_capacity(total_vertices);
+        let mut all_vertices: Vec<VertexPacked> = Vec::with_capacity(total_vertices);
         let mut all_indices: Vec<u16> = Vec::with_capacity(total_indices);
         let mut mesh_table: Vec<MeshTableEntry> = Vec::with_capacity(meshes.len());
 
@@ -77,7 +224,7 @@ impl MeshStorage {
             let index_count = mesh.indices.len() as u32;
 
             // 不改写 u16 索引值；用 base_vertex 来做顶点偏移（更安全，避免 u16 溢出）
-            all_vertices.extend_from_slice(&mesh.vertices);
+            all_vertices.extend(mesh.vertices.iter().map(VertexPacked::from));
             all_indices.extend_from_slice(&mesh.indices);
 
             mesh_table.push(MeshTableEntry {
@@ -142,21 +289,18 @@ impl Mesh {
                 normal,
                 color: glam::Vec4::new(1.0, 1.0, 1.0, 1.0),
                 uv: glam::Vec2::new(0.0, 0.0),
-                _pad: glam::Vec2::ZERO,
             },
             Vertex {
                 position: glam::Vec4::new(0.5, -0.5, 0.0, 1.0),
                 normal,
                 color: glam::Vec4::new(1.0, 1.0, 1.0, 1.0),
                 uv: glam::Vec2::new(1.0, 0.0),
-                _pad: glam::Vec2::ZERO,
             },
             Vertex {
                 position: glam::Vec4::new(0.0, 0.5, 0.0, 1.0),
                 normal,
                 color: glam::Vec4::new(1.0, 1.0, 1.0, 1.0),
                 uv: glam::Vec2::new(0.5, 1.0),
-                _pad: glam::Vec2::ZERO,
             },
         ];
 
@@ -253,7 +397,6 @@ impl Mesh {
                     normal: *normal,
                     color: white,
                     uv,
-                    _pad: glam::Vec2::ZERO,
                 });
             }
             // 两个三角形
@@ -312,7 +455,6 @@ impl Mesh {
                     normal,
                     color: white,
                     uv: glam::Vec2::new(u, 1.0 - v),
-                    _pad: glam::Vec2::ZERO,
                 });
             }
         }
