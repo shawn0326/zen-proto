@@ -1,13 +1,13 @@
+use crate::instance::{Instance, InstanceStorage};
 use crate::material::{Material, MaterialStorage};
 use crate::mesh::{Mesh, MeshStorage};
-use crate::primitive::{Primitive, PrimitiveStorage};
 use crate::texture::{Texture, TextureStorage};
 
 pub struct Resources {
-    pub meshes: MeshStorage,
-    pub materials: MaterialStorage,
-    pub primitives: PrimitiveStorage,
-    pub textures: TextureStorage,
+    meshes: MeshStorage,
+    materials: MaterialStorage,
+    instances: InstanceStorage,
+    textures: TextureStorage,
 }
 
 impl Resources {
@@ -16,19 +16,35 @@ impl Resources {
         queue: &wgpu::Queue,
         meshes: &[Mesh],
         materials: &[Material],
-        primitives: &[Primitive],
+        instances: &[Instance],
         textures: &[Texture],
     ) -> Self {
         let meshes = MeshStorage::from_meshes(device, meshes);
         let materials = MaterialStorage::from_materials(device, materials);
-        let primitives = PrimitiveStorage::from_primitives(device, primitives);
+        let instances = InstanceStorage::from_instances(device, instances);
         let textures = TextureStorage::from_textures(device, queue, textures);
 
         Self {
             meshes,
             materials,
-            primitives,
+            instances,
             textures,
         }
+    }
+
+    pub(crate) fn meshes(&self) -> &MeshStorage {
+        &self.meshes
+    }
+
+    pub(crate) fn materials(&self) -> &MaterialStorage {
+        &self.materials
+    }
+
+    pub(crate) fn instances(&self) -> &InstanceStorage {
+        &self.instances
+    }
+
+    pub(crate) fn textures(&self) -> &TextureStorage {
+        &self.textures
     }
 }

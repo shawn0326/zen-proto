@@ -165,11 +165,11 @@ impl OcclusionCullPass {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: resources.primitives.instance_buffer.as_entire_binding(),
+                        resource: resources.instances().instance_buffer().as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: resources.meshes.mesh_table_buffer.as_entire_binding(),
+                        resource: resources.meshes().mesh_table_buffer().as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 3,

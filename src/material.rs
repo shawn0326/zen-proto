@@ -7,8 +7,8 @@ pub struct Material {
 }
 
 pub struct MaterialStorage {
-    pub material_buffer: wgpu::Buffer,
-    pub material_count: u32,
+    material_buffer: wgpu::Buffer,
+    material_count: u32,
 }
 
 impl MaterialStorage {
@@ -21,9 +21,17 @@ impl MaterialStorage {
             usage: wgpu::BufferUsages::STORAGE,
         });
 
-        MaterialStorage {
+        Self {
             material_buffer,
             material_count: materials.len() as u32,
         }
+    }
+
+    pub(crate) fn material_buffer(&self) -> &wgpu::Buffer {
+        &self.material_buffer
+    }
+
+    pub fn material_count(&self) -> u32 {
+        self.material_count
     }
 }

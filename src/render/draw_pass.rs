@@ -1,7 +1,7 @@
 use crate::camera::Camera;
+use crate::instance::Instance;
 use crate::material::Material;
 use crate::mesh::Vertex;
-use crate::primitive::Primitive;
 use crate::render::render_target::RenderTargetContext;
 use crate::render::visibility_list::VisibilityList;
 use crate::resources::Resources;
@@ -74,7 +74,7 @@ impl DrawPass {
                         ty: wgpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: Some(
-                            std::num::NonZeroU64::new(std::mem::size_of::<Primitive>() as u64)
+                            std::num::NonZeroU64::new(std::mem::size_of::<Instance>() as u64)
                                 .unwrap(),
                         ),
                     },
@@ -102,15 +102,15 @@ impl DrawPass {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: resources.meshes.vertex_buffer.as_entire_binding(),
+                    resource: resources.meshes().vertex_buffer().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: resources.materials.material_buffer.as_entire_binding(),
+                    resource: resources.materials().material_buffer().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: resources.primitives.instance_buffer.as_entire_binding(),
+                    resource: resources.instances().instance_buffer().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
@@ -123,8 +123,8 @@ impl DrawPass {
             ],
         });
 
-        let max_texture_count = resources
-            .textures
+        let texture_storage = resources.textures();
+        let max_texture_count = texture_storage
             .max_texture_count()
             .min(device.limits().max_binding_array_elements_per_shader_stage);
 
@@ -153,8 +153,7 @@ impl DrawPass {
                 ],
             });
 
-        let view_refs: Vec<&wgpu::TextureView> =
-            resources.textures.texture_views().iter().collect();
+        let view_refs: Vec<&wgpu::TextureView> = texture_storage.texture_views().iter().collect();
         let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("draw.textures.bindless_bg"),
             layout: &texture_bind_group_layout,
@@ -165,7 +164,7 @@ impl DrawPass {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(resources.textures.sampler()),
+                    resource: wgpu::BindingResource::Sampler(texture_storage.sampler()),
                 },
             ],
         });

@@ -11,9 +11,9 @@ mod visibility_history;
 mod visibility_list;
 
 use crate::camera::Camera;
+use crate::instance::Instance;
 use crate::material::Material;
 use crate::mesh::Mesh;
-use crate::primitive::Primitive;
 use crate::resources::Resources;
 use crate::texture::Texture;
 use dispatch_prepare_pass::DispatchPreparePass;
@@ -108,18 +108,18 @@ impl DefaultRenderer {
         target: &RenderTarget,
         meshes: &[Mesh],
         materials: &[Material],
-        primitives: &[Primitive],
+        instances: &[Instance],
         textures: &[Texture],
     ) -> DefaultRenderer {
         // buffers
 
-        let resources = Resources::new(device, queue, meshes, materials, primitives, textures);
+        let resources = Resources::new(device, queue, meshes, materials, instances, textures);
+        let max_instance_count = resources.instances().instance_count();
 
-        let list_a = VisibilityList::new(device, "list_a", resources.primitives.instance_count);
-        let list_b = VisibilityList::new(device, "list_b", resources.primitives.instance_count);
+        let list_a = VisibilityList::new(device, "list_a", max_instance_count);
+        let list_b = VisibilityList::new(device, "list_b", max_instance_count);
 
-        let visibility_history =
-            VisibilityHistory::new(device, resources.primitives.instance_count);
+        let visibility_history = VisibilityHistory::new(device, max_instance_count);
 
         let hiz_texture = HiZTexture::new(device, target.width(), target.height());
         let hiz_view = hiz_texture.sampled_full_view();
@@ -176,7 +176,7 @@ impl DefaultRenderer {
         target_changed: bool,
     ) {
         let resources = &self.resources;
-        let max_instance_count = resources.primitives.instance_count;
+        let max_instance_count = resources.instances().instance_count();
 
         let target_context = target.get_target_context();
 
@@ -215,7 +215,7 @@ impl DefaultRenderer {
         self.draw_pass.encode(
             &mut encoder,
             &target_context,
-            &self.resources.meshes.index_buffer,
+            &self.resources.meshes().index_buffer(),
             &self.list_a,
             max_instance_count,
             true,
@@ -267,7 +267,7 @@ impl DefaultRenderer {
             self.draw_pass.encode(
                 &mut encoder,
                 &target_context,
-                &self.resources.meshes.index_buffer,
+                &self.resources.meshes().index_buffer(),
                 &self.list_b,
                 max_instance_count,
                 false,
@@ -289,7 +289,7 @@ impl DefaultRenderer {
             self.draw_pass.encode(
                 &mut encoder,
                 &target_context,
-                &self.resources.meshes.index_buffer,
+                &self.resources.meshes().index_buffer(),
                 &self.list_a,
                 max_instance_count,
                 true,
@@ -300,7 +300,7 @@ impl DefaultRenderer {
             self.draw_pass.encode(
                 &mut encoder,
                 &target_context,
-                &self.resources.meshes.index_buffer,
+                &self.resources.meshes().index_buffer(),
                 &self.list_b,
                 max_instance_count,
                 false,
@@ -340,6 +340,6 @@ impl DefaultRenderer {
     /// This is non-blocking; call it every frame (or at your preferred cadence).
     pub fn take_render_stats(&mut self, device: &wgpu::Device) -> Option<RenderStats> {
         self.stats_readback
-            .take_ready(device, self.resources.primitives.instance_count)
+            .take_ready(device, self.resources.instances().instance_count())
     }
 }

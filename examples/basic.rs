@@ -10,8 +10,8 @@ use std::sync::Arc;
 use winit::window::Window;
 use zen_proto::{
     camera::{Camera, PerspectiveProjection},
+    instance::Instance,
     material, mesh,
-    primitive::Primitive,
     render::{DefaultRenderer, RenderTarget, request_device_and_target},
     texture::Texture,
 };
@@ -62,9 +62,9 @@ impl Example for Demo {
         });
 
         let mut meshes = vec![];
-        meshes.push(mesh::create_triangle_mesh());
-        meshes.push(mesh::create_box_mesh());
-        meshes.push(mesh::create_sphere_mesh(6));
+        meshes.push(mesh::Mesh::create_triangle());
+        meshes.push(mesh::Mesh::create_box());
+        meshes.push(mesh::Mesh::create_sphere(6));
 
         let textures = vec![
             Texture::white_1x1(),
@@ -100,15 +100,15 @@ impl Example for Demo {
             });
         }
 
-        let primitive_count = 100_0000u32;
-        let mut primitives = Vec::with_capacity(primitive_count as usize);
+        let instance_count = 100_0000u32;
+        let mut instances = Vec::with_capacity(instance_count as usize);
         let mut rng = rand::rng();
-        for i in 0..primitive_count {
+        for i in 0..instance_count {
             let translation = rng.random::<glam::Vec3>() * 200. - 100.;
             let scale = rng.random::<f32>() * 2.0 + if i == 1 { 100.0 } else { 1.0 };
             let transform = glam::Mat4::from_translation(translation);
             let transform = transform * glam::Mat4::from_scale(glam::vec3(scale, scale, scale));
-            primitives.push(Primitive {
+            instances.push(Instance {
                 transform,
                 mesh_id: i % meshes.len() as u32,
                 material_id: i % materials.len() as u32,
@@ -117,13 +117,7 @@ impl Example for Demo {
         }
 
         let renderer = DefaultRenderer::new(
-            &device,
-            &queue,
-            &target,
-            &meshes,
-            &materials,
-            &primitives,
-            &textures,
+            &device, &queue, &target, &meshes, &materials, &instances, &textures,
         );
         Demo {
             device,

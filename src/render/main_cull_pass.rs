@@ -168,11 +168,11 @@ impl MainCullPass {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: resources.primitives.instance_buffer.as_entire_binding(),
+                    resource: resources.instances().instance_buffer().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: resources.meshes.mesh_table_buffer.as_entire_binding(),
+                    resource: resources.meshes().mesh_table_buffer().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -213,8 +213,8 @@ impl MainCullPass {
     ) {
         let uniform = MainCullUniform {
             planes: camera.frustum(),
-            max_instance_count: resources.primitives.instance_count,
-            mesh_count: resources.meshes.mesh_count,
+            max_instance_count: resources.instances().instance_count(),
+            mesh_count: resources.meshes().mesh_count(),
             enable_occlusion: if enable_occlusion { 1 } else { 0 },
             _pad: 0,
         };

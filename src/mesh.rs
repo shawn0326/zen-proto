@@ -54,10 +54,10 @@ pub struct MeshTableEntry {
 }
 
 pub struct MeshStorage {
-    pub vertex_buffer: wgpu::Buffer,
-    pub index_buffer: wgpu::Buffer,
-    pub mesh_table_buffer: wgpu::Buffer,
-    pub mesh_count: u32,
+    vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
+    mesh_table_buffer: wgpu::Buffer,
+    mesh_count: u32,
 }
 
 impl MeshStorage {
@@ -107,212 +107,230 @@ impl MeshStorage {
             usage: wgpu::BufferUsages::STORAGE,
         });
 
-        MeshStorage {
+        Self {
             vertex_buffer,
             index_buffer,
             mesh_table_buffer,
             mesh_count: meshes.len() as u32,
         }
     }
-}
 
-pub fn create_triangle_mesh() -> Mesh {
-    // 三角形面朝 +Z，法线为 (0,0,1,0)
-    let normal = glam::Vec4::new(0.0, 0.0, 1.0, 0.0);
-    let vertices: [Vertex; 3] = [
-        Vertex {
-            position: glam::Vec4::new(-0.5, -0.5, 0.0, 1.0),
-            normal,
-            color: glam::Vec4::new(1.0, 1.0, 1.0, 1.0),
-            uv: glam::Vec2::new(0.0, 0.0),
-            _pad: glam::Vec2::ZERO,
-        },
-        Vertex {
-            position: glam::Vec4::new(0.5, -0.5, 0.0, 1.0),
-            normal,
-            color: glam::Vec4::new(1.0, 1.0, 1.0, 1.0),
-            uv: glam::Vec2::new(1.0, 0.0),
-            _pad: glam::Vec2::ZERO,
-        },
-        Vertex {
-            position: glam::Vec4::new(0.0, 0.5, 0.0, 1.0),
-            normal,
-            color: glam::Vec4::new(1.0, 1.0, 1.0, 1.0),
-            uv: glam::Vec2::new(0.5, 1.0),
-            _pad: glam::Vec2::ZERO,
-        },
-    ];
+    pub(crate) fn vertex_buffer(&self) -> &wgpu::Buffer {
+        &self.vertex_buffer
+    }
 
-    let indices: [u16; 3] = [0, 1, 2];
+    pub(crate) fn index_buffer(&self) -> &wgpu::Buffer {
+        &self.index_buffer
+    }
 
-    Mesh {
-        vertices: vertices.to_vec(),
-        indices: indices.to_vec(),
+    pub(crate) fn mesh_table_buffer(&self) -> &wgpu::Buffer {
+        &self.mesh_table_buffer
+    }
+
+    pub(crate) fn mesh_count(&self) -> u32 {
+        self.mesh_count
     }
 }
 
-pub fn create_box_mesh() -> Mesh {
-    let white = glam::Vec4::new(1.0, 1.0, 1.0, 1.0);
-
-    // 每个面的数据：(法线, 4个顶点)
-    let faces = [
-        // back (-Z)
-        (
-            glam::Vec4::new(0.0, 0.0, -1.0, 0.0),
-            [
-                [-0.5, -0.5, -0.5],
-                [-0.5, 0.5, -0.5],
-                [0.5, 0.5, -0.5],
-                [0.5, -0.5, -0.5],
-            ],
-        ),
-        // front (+Z)
-        (
-            glam::Vec4::new(0.0, 0.0, 1.0, 0.0),
-            [
-                [-0.5, -0.5, 0.5],
-                [0.5, -0.5, 0.5],
-                [0.5, 0.5, 0.5],
-                [-0.5, 0.5, 0.5],
-            ],
-        ),
-        // left (-X)
-        (
-            glam::Vec4::new(-1.0, 0.0, 0.0, 0.0),
-            [
-                [-0.5, -0.5, -0.5],
-                [-0.5, -0.5, 0.5],
-                [-0.5, 0.5, 0.5],
-                [-0.5, 0.5, -0.5],
-            ],
-        ),
-        // right (+X)
-        (
-            glam::Vec4::new(1.0, 0.0, 0.0, 0.0),
-            [
-                [0.5, -0.5, -0.5],
-                [0.5, 0.5, -0.5],
-                [0.5, 0.5, 0.5],
-                [0.5, -0.5, 0.5],
-            ],
-        ),
-        // top (+Y)
-        (
-            glam::Vec4::new(0.0, 1.0, 0.0, 0.0),
-            [
-                [-0.5, 0.5, -0.5],
-                [-0.5, 0.5, 0.5],
-                [0.5, 0.5, 0.5],
-                [0.5, 0.5, -0.5],
-            ],
-        ),
-        // bottom (-Y)
-        (
-            glam::Vec4::new(0.0, -1.0, 0.0, 0.0),
-            [
-                [-0.5, -0.5, -0.5],
-                [0.5, -0.5, -0.5],
-                [0.5, -0.5, 0.5],
-                [-0.5, -0.5, 0.5],
-            ],
-        ),
-    ];
-
-    let mut vertices = Vec::with_capacity(24);
-    let mut indices = Vec::with_capacity(36);
-
-    for (face_idx, (normal, positions)) in faces.iter().enumerate() {
-        let base = (face_idx * 4) as u16;
-        for (i, pos) in positions.iter().enumerate() {
-            let uv = match i {
-                0 => glam::Vec2::new(0.0, 0.0),
-                1 => glam::Vec2::new(0.0, 1.0),
-                2 => glam::Vec2::new(1.0, 1.0),
-                _ => glam::Vec2::new(1.0, 0.0),
-            };
-
-            vertices.push(Vertex {
-                position: glam::Vec4::new(pos[0], pos[1], pos[2], 1.0),
-                normal: *normal,
-                color: white,
-                uv,
-                _pad: glam::Vec2::ZERO,
-            });
-        }
-        // 两个三角形
-        indices.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 3, base]);
-    }
-
-    Mesh { vertices, indices }
-}
-
-pub fn create_sphere_mesh(subdivisions: u32) -> Mesh {
-    // UV sphere: stacks(纬向) 与 slices(经向)
-    // subdivisions 太小会退化，给个下限
-    let stacks = subdivisions.max(3) as usize;
-    let slices = (subdivisions.max(3) * 2) as usize;
-
-    let radius: f32 = 0.5;
-    let white = glam::Vec4::new(1.0, 1.0, 1.0, 1.0);
-
-    // 顶点： (stacks+1) * (slices+1) 以处理经度缝合
-    let vert_count = (stacks + 1) * (slices + 1);
-    assert!(
-        vert_count <= u16::MAX as usize,
-        "create_sphere_mesh: too many vertices ({vert_count}), increase index type or reduce subdivisions"
-    );
-
-    let mut vertices = Vec::with_capacity(vert_count);
-    let mut indices = Vec::with_capacity(stacks * slices * 6);
-
-    let pi = std::f32::consts::PI;
-    let two_pi = 2.0 * pi;
-
-    for i in 0..=stacks {
-        let v = i as f32 / stacks as f32; // 0..1
-        let theta = v * pi; // 0..PI (north->south)
-
-        let sin_theta = theta.sin();
-        let cos_theta = theta.cos();
-
-        for j in 0..=slices {
-            let u = j as f32 / slices as f32; // 0..1
-            let phi = u * two_pi; // 0..2PI
-
-            let sin_phi = phi.sin();
-            let cos_phi = phi.cos();
-
-            // 右手系：x 右，y 上，z 前（你项目里一般这样用）
-            let x = sin_theta * cos_phi;
-            let y = cos_theta;
-            let z = sin_theta * sin_phi;
-
-            let normal3 = glam::Vec3::new(x, y, z).normalize();
-            let normal = glam::Vec4::new(normal3.x, normal3.y, normal3.z, 0.0);
-
-            vertices.push(Vertex {
-                position: glam::Vec4::new(radius * x, radius * y, radius * z, 1.0),
+impl Mesh {
+    pub fn create_triangle() -> Self {
+        // 三角形面朝 +Z，法线为 (0,0,1,0)
+        let normal = glam::Vec4::new(0.0, 0.0, 1.0, 0.0);
+        let vertices: [Vertex; 3] = [
+            Vertex {
+                position: glam::Vec4::new(-0.5, -0.5, 0.0, 1.0),
                 normal,
-                color: white,
-                uv: glam::Vec2::new(u, 1.0 - v),
+                color: glam::Vec4::new(1.0, 1.0, 1.0, 1.0),
+                uv: glam::Vec2::new(0.0, 0.0),
                 _pad: glam::Vec2::ZERO,
-            });
+            },
+            Vertex {
+                position: glam::Vec4::new(0.5, -0.5, 0.0, 1.0),
+                normal,
+                color: glam::Vec4::new(1.0, 1.0, 1.0, 1.0),
+                uv: glam::Vec2::new(1.0, 0.0),
+                _pad: glam::Vec2::ZERO,
+            },
+            Vertex {
+                position: glam::Vec4::new(0.0, 0.5, 0.0, 1.0),
+                normal,
+                color: glam::Vec4::new(1.0, 1.0, 1.0, 1.0),
+                uv: glam::Vec2::new(0.5, 1.0),
+                _pad: glam::Vec2::ZERO,
+            },
+        ];
+
+        let indices: [u16; 3] = [0, 1, 2];
+
+        Self {
+            vertices: vertices.to_vec(),
+            indices: indices.to_vec(),
         }
     }
 
-    // 索引：每个 quad -> 2 triangles
-    let stride = (slices + 1) as u16;
-    for i in 0..stacks {
-        for j in 0..slices {
-            let a = (i as u16) * stride + (j as u16);
-            let b = a + 1;
-            let c = a + stride;
-            let d = c + 1;
+    pub fn create_box() -> Self {
+        let white = glam::Vec4::new(1.0, 1.0, 1.0, 1.0);
 
-            // 外侧面：a-c-b 与 b-c-d（CCW）
-            indices.extend_from_slice(&[a, b, c, b, d, c]);
+        // 每个面的数据：(法线, 4个顶点)
+        let faces = [
+            // back (-Z)
+            (
+                glam::Vec4::new(0.0, 0.0, -1.0, 0.0),
+                [
+                    [-0.5, -0.5, -0.5],
+                    [-0.5, 0.5, -0.5],
+                    [0.5, 0.5, -0.5],
+                    [0.5, -0.5, -0.5],
+                ],
+            ),
+            // front (+Z)
+            (
+                glam::Vec4::new(0.0, 0.0, 1.0, 0.0),
+                [
+                    [-0.5, -0.5, 0.5],
+                    [0.5, -0.5, 0.5],
+                    [0.5, 0.5, 0.5],
+                    [-0.5, 0.5, 0.5],
+                ],
+            ),
+            // left (-X)
+            (
+                glam::Vec4::new(-1.0, 0.0, 0.0, 0.0),
+                [
+                    [-0.5, -0.5, -0.5],
+                    [-0.5, -0.5, 0.5],
+                    [-0.5, 0.5, 0.5],
+                    [-0.5, 0.5, -0.5],
+                ],
+            ),
+            // right (+X)
+            (
+                glam::Vec4::new(1.0, 0.0, 0.0, 0.0),
+                [
+                    [0.5, -0.5, -0.5],
+                    [0.5, 0.5, -0.5],
+                    [0.5, 0.5, 0.5],
+                    [0.5, -0.5, 0.5],
+                ],
+            ),
+            // top (+Y)
+            (
+                glam::Vec4::new(0.0, 1.0, 0.0, 0.0),
+                [
+                    [-0.5, 0.5, -0.5],
+                    [-0.5, 0.5, 0.5],
+                    [0.5, 0.5, 0.5],
+                    [0.5, 0.5, -0.5],
+                ],
+            ),
+            // bottom (-Y)
+            (
+                glam::Vec4::new(0.0, -1.0, 0.0, 0.0),
+                [
+                    [-0.5, -0.5, -0.5],
+                    [0.5, -0.5, -0.5],
+                    [0.5, -0.5, 0.5],
+                    [-0.5, -0.5, 0.5],
+                ],
+            ),
+        ];
+
+        let mut vertices = Vec::with_capacity(24);
+        let mut indices = Vec::with_capacity(36);
+
+        for (face_idx, (normal, positions)) in faces.iter().enumerate() {
+            let base = (face_idx * 4) as u16;
+            for (i, pos) in positions.iter().enumerate() {
+                let uv = match i {
+                    0 => glam::Vec2::new(0.0, 0.0),
+                    1 => glam::Vec2::new(0.0, 1.0),
+                    2 => glam::Vec2::new(1.0, 1.0),
+                    _ => glam::Vec2::new(1.0, 0.0),
+                };
+
+                vertices.push(Vertex {
+                    position: glam::Vec4::new(pos[0], pos[1], pos[2], 1.0),
+                    normal: *normal,
+                    color: white,
+                    uv,
+                    _pad: glam::Vec2::ZERO,
+                });
+            }
+            // 两个三角形
+            indices.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 3, base]);
         }
+
+        Self { vertices, indices }
     }
 
-    Mesh { vertices, indices }
+    pub fn create_sphere(subdivisions: u32) -> Self {
+        // UV sphere: stacks(纬向) 与 slices(经向)
+        // subdivisions 太小会退化，给个下限
+        let stacks = subdivisions.max(3) as usize;
+        let slices = (subdivisions.max(3) * 2) as usize;
+
+        let radius: f32 = 0.5;
+        let white = glam::Vec4::new(1.0, 1.0, 1.0, 1.0);
+
+        // 顶点： (stacks+1) * (slices+1) 以处理经度缝合
+        let vert_count = (stacks + 1) * (slices + 1);
+        assert!(
+            vert_count <= u16::MAX as usize,
+            "create_sphere_mesh: too many vertices ({vert_count}), increase index type or reduce subdivisions"
+        );
+
+        let mut vertices = Vec::with_capacity(vert_count);
+        let mut indices = Vec::with_capacity(stacks * slices * 6);
+
+        let pi = std::f32::consts::PI;
+        let two_pi = 2.0 * pi;
+
+        for i in 0..=stacks {
+            let v = i as f32 / stacks as f32; // 0..1
+            let theta = v * pi; // 0..PI (north->south)
+
+            let sin_theta = theta.sin();
+            let cos_theta = theta.cos();
+
+            for j in 0..=slices {
+                let u = j as f32 / slices as f32; // 0..1
+                let phi = u * two_pi; // 0..2PI
+
+                let sin_phi = phi.sin();
+                let cos_phi = phi.cos();
+
+                // 右手系：x 右，y 上，z 前（你项目里一般这样用）
+                let x = sin_theta * cos_phi;
+                let y = cos_theta;
+                let z = sin_theta * sin_phi;
+
+                let normal3 = glam::Vec3::new(x, y, z).normalize();
+                let normal = glam::Vec4::new(normal3.x, normal3.y, normal3.z, 0.0);
+
+                vertices.push(Vertex {
+                    position: glam::Vec4::new(radius * x, radius * y, radius * z, 1.0),
+                    normal,
+                    color: white,
+                    uv: glam::Vec2::new(u, 1.0 - v),
+                    _pad: glam::Vec2::ZERO,
+                });
+            }
+        }
+
+        // 索引：每个 quad -> 2 triangles
+        let stride = (slices + 1) as u16;
+        for i in 0..stacks {
+            for j in 0..slices {
+                let a = (i as u16) * stride + (j as u16);
+                let b = a + 1;
+                let c = a + stride;
+                let d = c + 1;
+
+                // 外侧面：a-c-b 与 b-c-d（CCW）
+                indices.extend_from_slice(&[a, b, c, b, d, c]);
+            }
+        }
+
+        Self { vertices, indices }
+    }
 }

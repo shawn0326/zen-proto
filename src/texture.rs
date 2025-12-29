@@ -1,3 +1,48 @@
+pub struct Texture {
+    pub width: u32,
+    pub height: u32,
+    pub format: wgpu::TextureFormat,
+    pub pixels: Vec<u8>,
+}
+
+impl Texture {
+    pub fn white_1x1() -> Self {
+        Self {
+            width: 1,
+            height: 1,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            pixels: vec![255, 255, 255, 255],
+        }
+    }
+
+    pub fn black_1x1() -> Self {
+        Self {
+            width: 1,
+            height: 1,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            pixels: vec![0, 0, 0, 255],
+        }
+    }
+
+    pub fn validate(&self) {
+        let expected = self
+            .width
+            .checked_mul(self.height)
+            .and_then(|v| v.checked_mul(4))
+            .expect("Texture too large");
+        assert!(
+            self.format == wgpu::TextureFormat::Rgba8UnormSrgb,
+            "Texture: only Rgba8UnormSrgb is supported for now"
+        );
+        assert!(
+            self.pixels.len() == expected as usize,
+            "Texture pixels size mismatch: got {}, expected {}",
+            self.pixels.len(),
+            expected
+        );
+    }
+}
+
 struct MipmapGenerator {
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
@@ -146,55 +191,10 @@ impl MipmapGenerator {
     }
 }
 
-pub struct Texture {
-    pub width: u32,
-    pub height: u32,
-    pub format: wgpu::TextureFormat,
-    pub pixels: Vec<u8>,
-}
-
-impl Texture {
-    pub fn white_1x1() -> Self {
-        Self {
-            width: 1,
-            height: 1,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            pixels: vec![255, 255, 255, 255],
-        }
-    }
-
-    pub fn black_1x1() -> Self {
-        Self {
-            width: 1,
-            height: 1,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            pixels: vec![0, 0, 0, 255],
-        }
-    }
-
-    pub fn validate(&self) {
-        let expected = self
-            .width
-            .checked_mul(self.height)
-            .and_then(|v| v.checked_mul(4))
-            .expect("Texture too large");
-        assert!(
-            self.format == wgpu::TextureFormat::Rgba8UnormSrgb,
-            "Texture: only Rgba8UnormSrgb is supported for now"
-        );
-        assert!(
-            self.pixels.len() == expected as usize,
-            "Texture pixels size mismatch: got {}, expected {}",
-            self.pixels.len(),
-            expected
-        );
-    }
-}
-
 pub struct TextureStorage {
     max_texture_count: u32,
 
-    _textures: Vec<wgpu::Texture>,
+    textures: Vec<wgpu::Texture>,
     views: Vec<wgpu::TextureView>,
     sampler: wgpu::Sampler,
 }
@@ -267,7 +267,7 @@ impl TextureStorage {
 
         Self {
             max_texture_count,
-            _textures: gpu_textures,
+            textures: gpu_textures,
             views,
             sampler,
         }
@@ -279,6 +279,10 @@ impl TextureStorage {
 
     pub fn texture_count(&self) -> u32 {
         self.views.len() as u32
+    }
+
+    pub fn textures(&self) -> &[wgpu::Texture] {
+        &self.textures
     }
 
     pub fn texture_views(&self) -> &[wgpu::TextureView] {
