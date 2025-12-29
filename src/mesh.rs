@@ -46,7 +46,7 @@ impl VertexPacked {
     #[inline]
     fn pack_unorm16x2(uv: glam::Vec2) -> u32 {
         fn q(x: f32) -> u32 {
-            let x = x.clamp(0.0, 1.0);
+            let x = x.rem_euclid(1.0);
             (x * 65535.0 + 0.5) as u32
         }
 

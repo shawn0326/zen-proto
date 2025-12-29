@@ -15,15 +15,16 @@ fn vs_main(@builtin(vertex_index) vid: u32) -> VsOut {
         vec2f(-1.0,  3.0),
     );
 
-    var uvs = array<vec2f, 3>(
-        vec2f(0.0, 0.0),
-        vec2f(2.0, 0.0),
-        vec2f(0.0, 2.0),
-    );
+    let p = positions[vid];
 
     var o: VsOut;
-    o.pos = vec4f(positions[vid], 0.0, 1.0);
-    o.uv = uvs[vid];
+    o.pos = vec4f(p, 0.0, 1.0);
+
+    // NDC(-1..1) -> UV(0..1), 注意翻转Y
+    var uv = p * 0.5 + vec2f(0.5, 0.5);
+    uv.y = 1.0 - uv.y;
+    o.uv = uv;
+
     return o;
 }
 

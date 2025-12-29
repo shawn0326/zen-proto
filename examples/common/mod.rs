@@ -1,6 +1,8 @@
 #[allow(dead_code)]
 pub mod frame_rate_tracker;
 #[allow(dead_code)]
+pub mod gltf_loader;
+#[allow(dead_code)]
 pub mod orbit_camera_controller;
 
 use frame_rate_tracker::FrameRateTracker;
