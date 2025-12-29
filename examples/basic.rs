@@ -21,6 +21,7 @@ struct Demo {
     queue: wgpu::Queue,
     target: RenderTarget,
     renderer: DefaultRenderer,
+    projection: PerspectiveProjection,
     camera: Camera,
     debug_camera: Camera,
     camera_controller: OrbitCameraController,
@@ -124,6 +125,7 @@ impl Example for Demo {
             queue,
             target,
             renderer,
+            projection,
             camera,
             debug_camera,
             camera_controller,
@@ -136,6 +138,9 @@ impl Example for Demo {
 
     fn resize(&mut self, width: u32, height: u32) {
         self.target.resize(width, height);
+        self.projection.aspect = width as f32 / height as f32;
+        self.camera.set_projection(self.projection);
+        self.debug_camera.set_projection(self.projection);
     }
 
     fn update(&mut self) {}

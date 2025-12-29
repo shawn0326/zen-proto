@@ -20,6 +20,7 @@ struct Demo {
     queue: wgpu::Queue,
     target: RenderTarget,
     renderer: DefaultRenderer,
+    projection: PerspectiveProjection,
     camera: Camera,
     camera_controller: OrbitCameraController,
     frame_index: u64,
@@ -48,13 +49,18 @@ impl Example for Demo {
             LoadGltfOptions {
                 global_scale: 1.0,
                 flip_v: false,
-                bake_node_transform: true,
+                bake_node_transform: false,
             },
         );
 
         let (center, radius) = compute_model_bounds(&model.meshes);
 
-        let projection = PerspectiveProjection::default();
+        let projection = PerspectiveProjection {
+            aspect: target.width() as f32 / target.height() as f32,
+            fovy_deg: 45.0,
+            near: 0.1,
+            far: 1000.0,
+        };
         let camera_pos = center + glam::vec3(0.0, 0.0, radius.max(0.01) * 3.0);
         let camera = Camera::new(
             glam::Mat4::look_at_rh(camera_pos, center, glam::vec3(0.0, 1.0, 0.0)).inverse(),
@@ -81,6 +87,7 @@ impl Example for Demo {
             queue,
             target,
             renderer,
+            projection,
             camera,
             camera_controller,
             frame_index: 0,
@@ -89,6 +96,8 @@ impl Example for Demo {
 
     fn resize(&mut self, width: u32, height: u32) {
         self.target.resize(width, height);
+        self.projection.aspect = width as f32 / height as f32;
+        self.camera.set_projection(self.projection);
     }
 
     fn update(&mut self) {}
