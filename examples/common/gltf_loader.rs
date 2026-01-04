@@ -71,10 +71,27 @@ pub fn load_gltf(path: impl AsRef<Path>, options: LoadGltfOptions) -> LoadedGltf
             texture_id = texture_id_for_image.get(image_index).copied().unwrap_or(0);
         }
 
+        let emissive_factor = m.emissive_factor();
+        let emissive_color = glam::Vec4::new(
+            emissive_factor[0],
+            emissive_factor[1],
+            emissive_factor[2],
+            1.0,
+        );
+
+        // If emissiveTexture is missing, fall back to white so emissive_factor can still work.
+        let mut emissive_texture_id = 0u32;
+        if let Some(info) = m.emissive_texture() {
+            let image_index = info.texture().source().index();
+            emissive_texture_id = texture_id_for_image.get(image_index).copied().unwrap_or(0);
+        }
+
         materials.push(Material {
             color: glam::Vec4::new(factor[0], factor[1], factor[2], factor[3]),
+            emissive_color,
             texture_id,
-            _pad: [0; 3],
+            emissive_texture_id,
+            _pad: [0; 2],
         });
     }
 
@@ -82,8 +99,10 @@ pub fn load_gltf(path: impl AsRef<Path>, options: LoadGltfOptions) -> LoadedGltf
     let default_material_id = if materials.is_empty() {
         materials.push(Material {
             color: glam::Vec4::ONE,
+            emissive_color: glam::Vec4::ZERO,
             texture_id: 0,
-            _pad: [0; 3],
+            emissive_texture_id: 0,
+            _pad: [0; 2],
         });
         0u32
     } else {
@@ -91,8 +110,10 @@ pub fn load_gltf(path: impl AsRef<Path>, options: LoadGltfOptions) -> LoadedGltf
         let id = materials.len() as u32;
         materials.push(Material {
             color: glam::Vec4::ONE,
+            emissive_color: glam::Vec4::ZERO,
             texture_id: 0,
-            _pad: [0; 3],
+            emissive_texture_id: 0,
+            _pad: [0; 2],
         });
         id
     };

@@ -2,8 +2,10 @@
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Material {
     pub color: glam::Vec4,
+    pub emissive_color: glam::Vec4,
     pub texture_id: u32,
-    pub _pad: [u32; 3],
+    pub emissive_texture_id: u32,
+    pub _pad: [u32; 2],
 }
 
 pub struct MaterialStorage {

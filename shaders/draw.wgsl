@@ -11,10 +11,11 @@ struct VertexPacked {
 
 struct Material {
     color: vec4f,
+    emissive_color: vec4f,
     texture_id: u32,
+    emissive_texture_id: u32,
     _pad0: u32,
     _pad1: u32,
-    _pad2: u32,
 }
 
 struct InstanceData {
@@ -43,6 +44,8 @@ struct VsOut {
     @location(1) normal: vec3f,
     @location(2) uv: vec2f,
     @location(3) tex_id: u32,
+    @location(4) emissive_color: vec4f,
+    @location(5) emissive_tex_id: u32,
 };
 
 fn decode_position(v: VertexPacked) -> vec3f {
@@ -100,6 +103,8 @@ fn vs_main(
     out.normal = world_normal;
     out.uv = uv;
     out.tex_id = material.texture_id;
+    out.emissive_color = material.emissive_color;
+    out.emissive_tex_id = material.emissive_texture_id;
     return out;
 }
 
@@ -109,7 +114,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     let n_dot_l = max(dot(in.normal, light_dir), 0.0);
     let diffuse = 0.0 + 0.9 * n_dot_l; // 环境光+漫反射
 
-    let tex_color = textureSample(textures[in.tex_id], tex_sampler, in.uv);
+    let base_tex = textureSample(textures[in.tex_id], tex_sampler, in.uv);
+    let base = in.color * diffuse * base_tex;
 
-    return in.color * diffuse * tex_color;
+    let emissive_tex = textureSample(textures[in.emissive_tex_id], tex_sampler, in.uv);
+    let emissive = in.emissive_color * emissive_tex;
+
+    return base + emissive;
 }

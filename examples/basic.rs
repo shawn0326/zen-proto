@@ -96,8 +96,10 @@ impl Example for Demo {
 
             materials.push(material::Material {
                 color: glam::Vec4::new(r + m, g + m, b + m, 1.0),
+                emissive_color: glam::Vec4::new(0.0, 0.0, 0.0, 1.0),
                 texture_id: i % textures_count,
-                _pad: [0; 3],
+                emissive_texture_id: 0,
+                _pad: [0; 2],
             });
         }
 
