@@ -95,11 +95,11 @@ impl Example for Demo {
             };
 
             materials.push(material::Material {
-                color: glam::Vec4::new(r + m, g + m, b + m, 1.0),
-                emissive_color: glam::Vec4::new(0.0, 0.0, 0.0, 1.0),
-                texture_id: i % textures_count,
-                emissive_texture_id: 0,
-                _pad: [0; 2],
+                albedo_factor: glam::Vec4::new(r + m, g + m, b + m, 1.0),
+                // emissive rgb + ao_strength in w
+                emissive_ao: glam::Vec4::new(0.0, 0.0, 0.0, 1.0),
+                // albedo/emissive/ao; fall back to white (0)
+                tex_ids: [i % textures_count, 0, 0, 0],
             });
         }
 

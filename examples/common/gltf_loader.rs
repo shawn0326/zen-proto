@@ -72,12 +72,8 @@ pub fn load_gltf(path: impl AsRef<Path>, options: LoadGltfOptions) -> LoadedGltf
         }
 
         let emissive_factor = m.emissive_factor();
-        let emissive_color = glam::Vec4::new(
-            emissive_factor[0],
-            emissive_factor[1],
-            emissive_factor[2],
-            1.0,
-        );
+        let emissive_rgb =
+            glam::Vec3::new(emissive_factor[0], emissive_factor[1], emissive_factor[2]);
 
         // If emissiveTexture is missing, fall back to white so emissive_factor can still work.
         let mut emissive_texture_id = 0u32;
@@ -86,34 +82,40 @@ pub fn load_gltf(path: impl AsRef<Path>, options: LoadGltfOptions) -> LoadedGltf
             emissive_texture_id = texture_id_for_image.get(image_index).copied().unwrap_or(0);
         }
 
+        // AO (occlusion) support
+        let mut ao_texture_id = 0u32;
+        let mut ao_strength = 1.0f32;
+        if let Some(occ) = m.occlusion_texture() {
+            let image_index = occ.texture().source().index();
+            ao_texture_id = texture_id_for_image.get(image_index).copied().unwrap_or(0);
+            ao_strength = occ.strength();
+        }
+
+        let emissive_ao =
+            glam::Vec4::new(emissive_rgb.x, emissive_rgb.y, emissive_rgb.z, ao_strength);
+
         materials.push(Material {
-            color: glam::Vec4::new(factor[0], factor[1], factor[2], factor[3]),
-            emissive_color,
-            texture_id,
-            emissive_texture_id,
-            _pad: [0; 2],
+            albedo_factor: glam::Vec4::new(factor[0], factor[1], factor[2], factor[3]),
+            emissive_ao,
+            tex_ids: [texture_id, emissive_texture_id, ao_texture_id, 0],
         });
     }
 
     // Ensure we have a valid fallback material.
     let default_material_id = if materials.is_empty() {
         materials.push(Material {
-            color: glam::Vec4::ONE,
-            emissive_color: glam::Vec4::ZERO,
-            texture_id: 0,
-            emissive_texture_id: 0,
-            _pad: [0; 2],
+            albedo_factor: glam::Vec4::ONE,
+            emissive_ao: glam::Vec4::new(0.0, 0.0, 0.0, 1.0),
+            tex_ids: [0, 0, 0, 0],
         });
         0u32
     } else {
         // Append a dedicated default (white) so primitives with no material index are stable.
         let id = materials.len() as u32;
         materials.push(Material {
-            color: glam::Vec4::ONE,
-            emissive_color: glam::Vec4::ZERO,
-            texture_id: 0,
-            emissive_texture_id: 0,
-            _pad: [0; 2],
+            albedo_factor: glam::Vec4::ONE,
+            emissive_ao: glam::Vec4::new(0.0, 0.0, 0.0, 1.0),
+            tex_ids: [0, 0, 0, 0],
         });
         id
     };

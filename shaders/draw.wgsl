@@ -10,12 +10,11 @@ struct VertexPacked {
 };
 
 struct Material {
-    color: vec4f,
-    emissive_color: vec4f,
-    texture_id: u32,
-    emissive_texture_id: u32,
-    _pad0: u32,
-    _pad1: u32,
+    albedo_factor: vec4f,
+    // xyz: emissive factor, w: occlusion strength
+    emissive_ao: vec4f,
+    // x: albedo tex id, y: emissive tex id, z: occlusion tex id, w: reserved
+    tex_ids: vec4u,
 }
 
 struct InstanceData {
@@ -43,9 +42,7 @@ struct VsOut {
     @location(0) color: vec4f,
     @location(1) normal: vec3f,
     @location(2) uv: vec2f,
-    @location(3) tex_id: u32,
-    @location(4) emissive_color: vec4f,
-    @location(5) emissive_tex_id: u32,
+    @location(3) material_id: u32,
 };
 
 fn decode_position(v: VertexPacked) -> vec3f {
@@ -83,7 +80,7 @@ fn vs_main(
 ) -> VsOut {
     let v: VertexPacked = vertices[vtx];
     let model = instances[inst].model;
-    let material = materials[instances[inst].material_id];
+    let material_id = instances[inst].material_id;
 
     let pos = decode_position(v);
     let local_normal = decode_normal(v);
@@ -99,26 +96,36 @@ fn vs_main(
 
     var out: VsOut;
     out.pos = camera.view_proj * model * vec4f(pos, 1.0);
-    out.color = local_color * material.color;
+    out.color = local_color;
     out.normal = world_normal;
     out.uv = uv;
-    out.tex_id = material.texture_id;
-    out.emissive_color = material.emissive_color;
-    out.emissive_tex_id = material.emissive_texture_id;
+    out.material_id = material_id;
     return out;
 }
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4f {
     let light_dir = normalize(vec3f(0.5, 1.0, 0.8));
+
+    let material = materials[in.material_id];
+    let albedo_tex_id = material.tex_ids.x;
+    let emissive_tex_id = material.tex_ids.y;
+    let occlusion_tex_id = material.tex_ids.z;
+
+    let vertex_albedo = in.color * material.albedo_factor;
+    let albedo = textureSample(textures[albedo_tex_id], tex_sampler, in.uv) * vertex_albedo;
+
+    let emission = textureSample(textures[emissive_tex_id], tex_sampler, in.uv).rgb
+        * material.emissive_ao.rgb;
+
+    let ao_tex = textureSample(textures[occlusion_tex_id], tex_sampler, in.uv).r;
+    let ao = clamp(ao_tex * material.emissive_ao.w, 0.0, 1.0);
+
     let n_dot_l = max(dot(in.normal, light_dir), 0.0);
-    let diffuse = 0.0 + 0.9 * n_dot_l; // 环境光+漫反射
+    let lighted = n_dot_l * albedo.rgb;
 
-    let base_tex = textureSample(textures[in.tex_id], tex_sampler, in.uv);
-    let base = in.color * diffuse * base_tex;
+    let ambient_color = vec3f(0.01, 0.01, 0.01);
+    let ambient = ambient_color * albedo.rgb * ao;
 
-    let emissive_tex = textureSample(textures[in.emissive_tex_id], tex_sampler, in.uv);
-    let emissive = in.emissive_color * emissive_tex;
-
-    return base + emissive;
+    return vec4f(lighted + emission + ambient, albedo.a);
 }

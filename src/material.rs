@@ -1,11 +1,11 @@
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Material {
-    pub color: glam::Vec4,
-    pub emissive_color: glam::Vec4,
-    pub texture_id: u32,
-    pub emissive_texture_id: u32,
-    pub _pad: [u32; 2],
+    pub albedo_factor: glam::Vec4,
+    /// xyz: emissive factor (linear), w: occlusion strength
+    pub emissive_ao: glam::Vec4,
+    /// x: albedo tex id, y: emissive tex id, z: occlusion tex id, w: reserved
+    pub tex_ids: [u32; 4],
 }
 
 pub struct MaterialStorage {
