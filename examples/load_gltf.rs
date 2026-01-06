@@ -118,6 +118,19 @@ impl Example for Demo {
             true,
             target_changed,
         );
+
+        if let Some(stats) = self.renderer.take_render_stats(&self.device) {
+            println!(
+                "Render stats: total={} main_cull_visible={} drawn={} (A: vis={} draw={} | B: vis={} draw={})",
+                stats.total_instances,
+                stats.visible_after_main_cull,
+                stats.drawn_instances,
+                stats.list_a_visible,
+                stats.list_a_drawn,
+                stats.list_b_visible,
+                stats.list_b_drawn,
+            );
+        }
     }
 
     fn mouse_drag(&mut self, dx: f32, dy: f32) {

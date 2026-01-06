@@ -286,13 +286,13 @@ fn build_engine_mesh_from_primitive(
     );
 
     // 打印一下原始uv的最大和最小值
-    println!(
-        "Original UVs: u [{}, {}], v [{}, {}]",
-        uvs.iter().map(|uv| uv.x).fold(f32::INFINITY, f32::min),
-        uvs.iter().map(|uv| uv.x).fold(f32::NEG_INFINITY, f32::max),
-        uvs.iter().map(|uv| uv.y).fold(f32::INFINITY, f32::min),
-        uvs.iter().map(|uv| uv.y).fold(f32::NEG_INFINITY, f32::max),
-    );
+    // println!(
+    //     "Original UVs: u [{}, {}], v [{}, {}]",
+    //     uvs.iter().map(|uv| uv.x).fold(f32::INFINITY, f32::min),
+    //     uvs.iter().map(|uv| uv.x).fold(f32::NEG_INFINITY, f32::max),
+    //     uvs.iter().map(|uv| uv.y).fold(f32::INFINITY, f32::min),
+    //     uvs.iter().map(|uv| uv.y).fold(f32::NEG_INFINITY, f32::max),
+    // );
 
     let colors: Vec<glam::Vec4> = if let Some(c) = reader.read_colors(0) {
         c.into_rgba_f32()
