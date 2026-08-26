@@ -1,19 +1,17 @@
-mod common;
-
-use common::{
+use std::path::Path;
+use std::sync::Arc;
+use winit::window::Window;
+use zen_demo::{
     Example,
     orbit_camera_controller::{OrbitCameraController, OrbitCameraControllerOptions},
     run,
 };
-use std::path::Path;
-use std::sync::Arc;
-use winit::window::Window;
-use zen_proto::{
+use zen_renderer::{
     camera::{Camera, PerspectiveProjection},
     render::{DefaultRenderer, RenderTarget, request_device_and_target},
 };
 
-use common::gltf_loader::{LoadGltfOptions, load_gltf};
+use zen_demo::gltf_loader::{LoadGltfOptions, load_gltf};
 
 struct Demo {
     device: wgpu::Device,
@@ -33,6 +31,10 @@ impl Example for Demo {
         let (device, queue, target) = request_device_and_target(&instance, surface).await;
 
         let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let workspace_dir = manifest_dir
+            .parent()
+            .and_then(Path::parent)
+            .expect("zen-demo must be located under apps/ in the workspace");
         let default_path = manifest_dir
             .join("assets")
             .join("DamagedHelmet")
@@ -41,7 +43,7 @@ impl Example for Demo {
 
         let path = std::env::args()
             .nth(1)
-            .map(|p| manifest_dir.join(p))
+            .map(|p| resolve_model_path(workspace_dir, manifest_dir, p))
             .unwrap_or(default_path);
 
         let model = load_gltf(
@@ -144,7 +146,7 @@ impl Example for Demo {
     }
 }
 
-fn compute_model_bounds(meshes: &[zen_proto::mesh::Mesh]) -> (glam::Vec3, f32) {
+fn compute_model_bounds(meshes: &[zen_renderer::mesh::Mesh]) -> (glam::Vec3, f32) {
     let mut min = glam::Vec3::splat(f32::INFINITY);
     let mut max = glam::Vec3::splat(f32::NEG_INFINITY);
 
@@ -166,6 +168,64 @@ fn compute_model_bounds(meshes: &[zen_proto::mesh::Mesh]) -> (glam::Vec3, f32) {
     (center, radius)
 }
 
+fn resolve_model_path(
+    workspace_dir: &Path,
+    manifest_dir: &Path,
+    path: impl AsRef<Path>,
+) -> std::path::PathBuf {
+    let path = path.as_ref();
+    if path.is_absolute() {
+        path.to_owned()
+    } else if let Ok(asset_path) = path.strip_prefix("assets") {
+        manifest_dir.join("assets").join(asset_path)
+    } else {
+        workspace_dir.join(path)
+    }
+}
+
 fn main() {
     run::<Demo>(Some(120));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolves_relative_paths_from_workspace_root() {
+        let workspace_dir = Path::new("workspace");
+        let manifest_dir = workspace_dir.join("apps/zen-demo");
+
+        assert_eq!(
+            resolve_model_path(workspace_dir, &manifest_dir, "models/model.gltf"),
+            workspace_dir.join("models/model.gltf")
+        );
+    }
+
+    #[test]
+    fn maps_legacy_asset_paths_to_demo_assets() {
+        let workspace_dir = Path::new("workspace");
+        let manifest_dir = workspace_dir.join("apps/zen-demo");
+
+        assert_eq!(
+            resolve_model_path(
+                workspace_dir,
+                &manifest_dir,
+                "assets/DamagedHelmet/glTF/DamagedHelmet.gltf",
+            ),
+            manifest_dir.join("assets/DamagedHelmet/glTF/DamagedHelmet.gltf")
+        );
+    }
+
+    #[test]
+    fn preserves_absolute_paths() {
+        let workspace_dir = Path::new("workspace");
+        let manifest_dir = workspace_dir.join("apps/zen-demo");
+        let absolute_path = std::env::current_dir().unwrap().join("model.gltf");
+
+        assert_eq!(
+            resolve_model_path(workspace_dir, &manifest_dir, &absolute_path),
+            absolute_path
+        );
+    }
 }

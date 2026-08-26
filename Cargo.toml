@@ -1,17 +1,20 @@
-[package]
-name = "zen-proto"
-version = "0.1.0"
+[workspace]
+resolver = "3"
+members = [
+    "crates/zen-renderer",
+    "apps/zen-demo",
+]
+default-members = ["crates/zen-renderer"]
+
+[workspace.package]
 edition = "2024"
 
-[dependencies]
+[workspace.dependencies]
 wgpu = "30.0.1"
 glam = { version = "0.30", features = ["bytemuck"] }
 bytemuck = { version = "1.24", features = ["derive"] }
-
-[dev-dependencies]
 winit = "0.30"
 pollster = "0.4"
-glam = { version = "0.30", features = ["rand"] }
 rand = "0.9"
 image = "0.25"
 gltf = { version = "1", features = ["KHR_texture_transform"] }

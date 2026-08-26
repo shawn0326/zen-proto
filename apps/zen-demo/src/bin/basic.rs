@@ -1,14 +1,13 @@
-mod common;
-use common::{
-    Example,
-    orbit_camera_controller::{OrbitCameraController, OrbitCameraControllerOptions},
-    run,
-};
 use rand::Rng;
 use std::path::Path;
 use std::sync::Arc;
 use winit::window::Window;
-use zen_proto::{
+use zen_demo::{
+    Example,
+    orbit_camera_controller::{OrbitCameraController, OrbitCameraControllerOptions},
+    run,
+};
+use zen_renderer::{
     camera::{Camera, PerspectiveProjection},
     instance::Instance,
     material, mesh,

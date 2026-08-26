@@ -17,6 +17,7 @@ use winit::{
     window::{Window, WindowId},
 };
 
+#[allow(async_fn_in_trait)]
 pub trait Example {
     async fn init(window: Arc<Window>) -> Self;
     fn resize(&mut self, width: u32, height: u32);

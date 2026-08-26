@@ -1,0 +1,10 @@
+[package]
+name = "zen-renderer"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+
+[dependencies]
+wgpu.workspace = true
+glam.workspace = true
+bytemuck.workspace = true

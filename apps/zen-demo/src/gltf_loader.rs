@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use zen_proto::{
+use zen_renderer::{
     instance::Instance,
     material::Material,
     mesh::{Mesh, Vertex},
