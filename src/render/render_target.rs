@@ -21,6 +21,7 @@ impl RenderTarget {
             height: 600,
             present_mode: wgpu::PresentMode::Mailbox,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            color_space: wgpu::SurfaceColorSpace::Auto,
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
@@ -153,8 +154,26 @@ impl RenderTarget {
         &self.depth_for_hiz_view
     }
 
-    pub fn get_target_context(&self) -> Result<RenderTargetContext, wgpu::SurfaceError> {
-        let surface_texture = self.surface.get_current_texture()?;
+    pub(crate) fn get_target_context(&self, device: &wgpu::Device) -> Option<RenderTargetContext> {
+        let surface_texture = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(surface_texture) => surface_texture,
+            wgpu::CurrentSurfaceTexture::Suboptimal(surface_texture) => {
+                drop(surface_texture);
+                self.surface.configure(device, &self.surface_configuration);
+                return None;
+            }
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                self.surface.configure(device, &self.surface_configuration);
+                return None;
+            }
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                return None;
+            }
+            wgpu::CurrentSurfaceTexture::Validation => {
+                eprintln!("Surface validation error while acquiring the next frame");
+                return None;
+            }
+        };
         let color_view = surface_texture
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -162,10 +181,10 @@ impl RenderTarget {
             .depth_stencil_texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        Ok(RenderTargetContext {
-            surface_texture: surface_texture,
-            color_view: color_view,
-            depth_stencil_view: depth_stencil_view,
+        Some(RenderTargetContext {
+            surface_texture,
+            color_view,
+            depth_stencil_view,
         })
     }
 }

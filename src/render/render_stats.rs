@@ -186,7 +186,14 @@ impl RenderStatsReadback {
 
         let dst = &self.staging[in_flight.buffer_index];
         if result.is_ok() {
-            let data = dst.slice(..).get_mapped_range();
+            let data = match dst.slice(..).get_mapped_range() {
+                Ok(data) => data,
+                Err(error) => {
+                    eprintln!("Failed to read mapped GPU stats: {error}");
+                    dst.unmap();
+                    return;
+                }
+            };
             let words: [u32; 4] = bytemuck::cast_slice(&data)[0..4].try_into().unwrap();
             drop(data);
             dst.unmap();

@@ -1,3 +1,5 @@
+enable wgpu_binding_array;
+
 struct VertexPacked {
     px: f32,
     py: f32,
@@ -42,7 +44,7 @@ struct VsOut {
     @location(0) color: vec4f,
     @location(1) normal: vec3f,
     @location(2) uv: vec2f,
-    @location(3) material_id: u32,
+    @location(3) @interpolate(flat) material_id: u32,
 };
 
 fn decode_position(v: VertexPacked) -> vec3f {

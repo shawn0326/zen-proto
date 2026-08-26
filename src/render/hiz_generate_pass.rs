@@ -63,8 +63,8 @@ impl HiZGeneratePass {
         let depth_to_mip0_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("hiz.depth_to_mip0_pipeline_layout"),
-                bind_group_layouts: &[&depth_to_mip0_bgl],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(&depth_to_mip0_bgl)],
+                immediate_size: 0,
             });
 
         let depth_to_mip0_pipeline =
@@ -109,8 +109,8 @@ impl HiZGeneratePass {
         let mip_to_mip_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("hiz.mip_to_mip_pipeline_layout"),
-                bind_group_layouts: &[&mip_to_mip_bgl],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(&mip_to_mip_bgl)],
+                immediate_size: 0,
             });
 
         let mip_to_mip_pipeline =

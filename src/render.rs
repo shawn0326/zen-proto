@@ -38,6 +38,7 @@ pub async fn request_device_and_target(
             power_preference: wgpu::PowerPreference::default(),
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
+            apply_limit_buckets: false,
         })
         .await
         .unwrap();
@@ -178,22 +179,8 @@ impl DefaultRenderer {
         let resources = &self.resources;
         let max_instance_count = resources.instances().instance_count();
 
-        let target_context = target.get_target_context();
-
-        let target_context = match target_context {
-            Ok(context) => context,
-            Err(wgpu::SurfaceError::Lost) => {
-                println!("Surface lost");
-                return;
-            }
-            Err(wgpu::SurfaceError::OutOfMemory) => {
-                println!("Out of memory");
-                return;
-            }
-            Err(e) => {
-                println!("Failed to acquire next swap chain texture: {:?}", e);
-                return;
-            }
+        let Some(target_context) = target.get_target_context(device) else {
+            return;
         };
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -324,7 +311,7 @@ impl DefaultRenderer {
         // Start mapping after submit, then progress mapping if needed.
         self.stats_readback.after_submit(device);
 
-        target_context.surface_texture.present();
+        queue.present(target_context.surface_texture);
     }
 
     /// Request a low-overhead GPU->CPU readback of render counters.
