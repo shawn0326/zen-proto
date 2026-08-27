@@ -140,7 +140,7 @@ impl HiZGeneratePass {
     }
 
     fn ceil_div(a: u32, b: u32) -> u32 {
-        (a + b - 1) / b
+        a.div_ceil(b)
     }
 
     fn mip_dim(mut base: u32, level: u32) -> u32 {

@@ -36,7 +36,7 @@ impl VertexPacked {
 
     #[inline]
     fn unpack_rgba8(c: u32) -> glam::Vec4 {
-        let r = ((c >> 0) & 0xFF) as f32 / 255.0;
+        let r = (c & 0xFF) as f32 / 255.0;
         let g = ((c >> 8) & 0xFF) as f32 / 255.0;
         let b = ((c >> 16) & 0xFF) as f32 / 255.0;
         let a = ((c >> 24) & 0xFF) as f32 / 255.0;

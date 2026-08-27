@@ -61,10 +61,11 @@ impl Example for Demo {
             ..Default::default()
         });
 
-        let mut meshes = vec![];
-        meshes.push(mesh::Mesh::create_triangle());
-        meshes.push(mesh::Mesh::create_box());
-        meshes.push(mesh::Mesh::create_sphere(6));
+        let meshes = vec![
+            mesh::Mesh::create_triangle(),
+            mesh::Mesh::create_box(),
+            mesh::Mesh::create_sphere(6),
+        ];
 
         let textures = vec![
             Texture::white_1x1(),
@@ -149,7 +150,7 @@ impl Example for Demo {
     fn render(&mut self) {
         // Low-frequency stats: request once per ~120 frames, print when ready.
         self.frame_index += 1;
-        if self.frame_index % 120 == 0 {
+        if self.frame_index.is_multiple_of(120) {
             self.renderer.request_render_stats();
         }
 

@@ -291,10 +291,10 @@ impl OrbitCameraController {
         }
 
         let mut camera = Mat4::IDENTITY;
-        camera = camera * Mat4::from_translation(self.target);
-        camera = camera * Mat4::from_rotation_y(-self.orbit_y);
-        camera = camera * Mat4::from_rotation_x(-self.orbit_x);
-        camera = camera * Mat4::from_translation(Vec3::new(0.0, 0.0, self.distance));
+        camera *= Mat4::from_translation(self.target);
+        camera *= Mat4::from_rotation_y(-self.orbit_y);
+        camera *= Mat4::from_rotation_x(-self.orbit_x);
+        camera *= Mat4::from_translation(Vec3::new(0.0, 0.0, self.distance));
 
         self.camera_mat = camera;
         self.view_mat = camera.inverse();

@@ -106,7 +106,7 @@ impl Example for Demo {
 
     fn render(&mut self) {
         self.frame_index += 1;
-        if self.frame_index % 120 == 0 {
+        if self.frame_index.is_multiple_of(120) {
             self.renderer.request_render_stats();
         }
 

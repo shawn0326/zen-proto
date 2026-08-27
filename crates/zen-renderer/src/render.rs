@@ -64,13 +64,15 @@ pub async fn request_device_and_target(
 
     // Bindless texture arrays require non-zero binding-array limits.
     let adapter_limits = adapter.limits();
-    let mut required_limits = wgpu::Limits::default();
-    required_limits.max_binding_array_elements_per_shader_stage =
-        1024.min(adapter_limits.max_binding_array_elements_per_shader_stage);
+    let required_limits = wgpu::Limits {
+        max_binding_array_elements_per_shader_stage: 1024
+            .min(adapter_limits.max_binding_array_elements_per_shader_stage),
+        ..Default::default()
+    };
 
     let (device, queue) = adapter
         .request_device(&wgpu::DeviceDescriptor {
-            required_features: required_features,
+            required_features,
             required_limits,
             ..Default::default()
         })
@@ -166,6 +168,10 @@ impl DefaultRenderer {
         }
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "keep the renderer's existing public API stable until the FrameGraph migration"
+    )]
     pub fn render(
         &mut self,
         device: &wgpu::Device,
@@ -198,11 +204,11 @@ impl DefaultRenderer {
             .encode(&mut encoder, &self.list_a);
         self.draw_prepare_pass.encode(&mut encoder, &self.list_a);
 
-        self.draw_pass.update(&queue, &camera, 0);
+        self.draw_pass.update(queue, &camera, 0);
         self.draw_pass.encode(
             &mut encoder,
             &target_context,
-            &self.resources.meshes().index_buffer(),
+            self.resources.meshes().index_buffer(),
             &self.list_a,
             max_instance_count,
             true,
@@ -221,14 +227,14 @@ impl DefaultRenderer {
                 self.occlusion_cull_pass.clear_cache();
                 self.occlusion_cull_pass.prepare(
                     device,
-                    &resources,
+                    resources,
                     &self.visibility_history,
                     hiz_view,
                     &self.list_a,
                 );
                 self.occlusion_cull_pass.prepare(
                     device,
-                    &resources,
+                    resources,
                     &self.visibility_history,
                     hiz_view,
                     &self.list_b,
@@ -246,7 +252,7 @@ impl DefaultRenderer {
             // Occlusion cull List B: update visibility_history based on Hi-Z.
             // (History for List A will be handled later.)
             self.occlusion_cull_pass
-                .update(&queue, &camera, target.width(), target.height());
+                .update(queue, &camera, target.width(), target.height());
             self.occlusion_cull_pass.encode(&mut encoder, &self.list_b);
 
             self.draw_prepare_pass.encode(&mut encoder, &self.list_b);
@@ -254,7 +260,7 @@ impl DefaultRenderer {
             self.draw_pass.encode(
                 &mut encoder,
                 &target_context,
-                &self.resources.meshes().index_buffer(),
+                self.resources.meshes().index_buffer(),
                 &self.list_b,
                 max_instance_count,
                 false,
@@ -271,12 +277,12 @@ impl DefaultRenderer {
         }
 
         if let Some(debug_camera) = debug_camera {
-            self.draw_pass.update(&queue, &debug_camera, 1);
+            self.draw_pass.update(queue, &debug_camera, 1);
 
             self.draw_pass.encode(
                 &mut encoder,
                 &target_context,
-                &self.resources.meshes().index_buffer(),
+                self.resources.meshes().index_buffer(),
                 &self.list_a,
                 max_instance_count,
                 true,
@@ -287,7 +293,7 @@ impl DefaultRenderer {
             self.draw_pass.encode(
                 &mut encoder,
                 &target_context,
-                &self.resources.meshes().index_buffer(),
+                self.resources.meshes().index_buffer(),
                 &self.list_b,
                 max_instance_count,
                 false,

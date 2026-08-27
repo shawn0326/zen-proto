@@ -26,7 +26,7 @@ impl RenderTarget {
             desired_maximum_frame_latency: 2,
         };
 
-        surface.configure(&device, &surface_configuration);
+        surface.configure(device, &surface_configuration);
 
         let depth_stencil_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("depth_stencil_texture"),

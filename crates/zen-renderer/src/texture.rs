@@ -302,7 +302,7 @@ impl TextureStorage {
         let bytes_per_pixel = 4u32;
         let unpadded_row_bytes = texture.width * bytes_per_pixel;
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let padded_row_bytes = ((unpadded_row_bytes + align - 1) / align) * align;
+        let padded_row_bytes = unpadded_row_bytes.div_ceil(align) * align;
 
         let mut padded = vec![0u8; (padded_row_bytes * texture.height) as usize];
         for y in 0..texture.height as usize {

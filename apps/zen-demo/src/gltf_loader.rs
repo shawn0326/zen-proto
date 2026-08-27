@@ -232,7 +232,7 @@ fn build_engine_mesh_from_primitive(
     };
 
     assert!(
-        indices_u32.len() % 3 == 0,
+        indices_u32.len().is_multiple_of(3),
         "Triangle primitive has non-multiple-of-3 indices"
     );
     let max_index = indices_u32.iter().copied().max().unwrap_or(0) as usize;
@@ -344,7 +344,7 @@ fn build_engine_mesh_from_primitive(
 fn compute_smooth_normals(positions: &[glam::Vec3], indices: &[u16]) -> Vec<glam::Vec3> {
     let mut normals = vec![glam::Vec3::ZERO; positions.len()];
 
-    for tri in indices.chunks_exact(3) {
+    for tri in indices.as_chunks::<3>().0 {
         let i0 = tri[0] as usize;
         let i1 = tri[1] as usize;
         let i2 = tri[2] as usize;
@@ -384,7 +384,7 @@ fn convert_gltf_image_to_rgba8(img: &gltf::image::Data) -> (Vec<u8>, u32, u32) {
         gltf::image::Format::R8G8B8A8 => pixels.clone(),
         gltf::image::Format::R8G8B8 => {
             let mut out = Vec::with_capacity((width * height * 4) as usize);
-            for p in pixels.chunks_exact(3) {
+            for p in pixels.as_chunks::<3>().0 {
                 out.push(p[0]);
                 out.push(p[1]);
                 out.push(p[2]);
@@ -394,7 +394,7 @@ fn convert_gltf_image_to_rgba8(img: &gltf::image::Data) -> (Vec<u8>, u32, u32) {
         }
         gltf::image::Format::R8G8 => {
             let mut out = Vec::with_capacity((width * height * 4) as usize);
-            for p in pixels.chunks_exact(2) {
+            for p in pixels.as_chunks::<2>().0 {
                 let r = p[0];
                 let g = p[1];
                 out.push(r);

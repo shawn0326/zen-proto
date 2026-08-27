@@ -223,7 +223,7 @@ impl MainCullPass {
 
     pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, max_instance_count: u32) {
         let wg_size = 64;
-        let group_count = (max_instance_count + wg_size - 1) / wg_size;
+        let group_count = max_instance_count.div_ceil(wg_size);
 
         let bind_group = self.bind_group.borrow();
         let bind_group = bind_group

@@ -228,6 +228,10 @@ impl DrawPass {
         );
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the explicit pass inputs will be replaced by FrameGraph resource declarations"
+    )]
     pub fn encode(
         &self,
         encoder: &mut wgpu::CommandEncoder,

@@ -19,9 +19,14 @@ impl Default for PerspectiveProjection {
     }
 }
 
-impl Into<Mat4> for PerspectiveProjection {
-    fn into(self) -> Mat4 {
-        Mat4::perspective_rh(self.fovy_deg.to_radians(), self.aspect, self.near, self.far)
+impl From<PerspectiveProjection> for Mat4 {
+    fn from(projection: PerspectiveProjection) -> Self {
+        Mat4::perspective_rh(
+            projection.fovy_deg.to_radians(),
+            projection.aspect,
+            projection.near,
+            projection.far,
+        )
     }
 }
 
@@ -48,15 +53,15 @@ impl Default for OrthographicProjection {
     }
 }
 
-impl Into<Mat4> for OrthographicProjection {
-    fn into(self) -> Mat4 {
+impl From<OrthographicProjection> for Mat4 {
+    fn from(projection: OrthographicProjection) -> Self {
         Mat4::orthographic_rh(
-            self.left,
-            self.right,
-            self.bottom,
-            self.top,
-            self.near,
-            self.far,
+            projection.left,
+            projection.right,
+            projection.bottom,
+            projection.top,
+            projection.near,
+            projection.far,
         )
     }
 }

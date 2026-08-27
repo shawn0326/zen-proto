@@ -146,13 +146,13 @@ impl<E: Example> ApplicationHandler for App<E> {
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
-                if self.mouse_left_down {
-                    if let (Some(example), Some(last)) = (&mut self.example, self.last_cursor_pos) {
-                        let dx = (position.x - last.x) as f32;
-                        let dy = (position.y - last.y) as f32;
-                        if dx != 0.0 || dy != 0.0 {
-                            example.mouse_drag(dx, dy);
-                        }
+                if self.mouse_left_down
+                    && let (Some(example), Some(last)) = (&mut self.example, self.last_cursor_pos)
+                {
+                    let dx = (position.x - last.x) as f32;
+                    let dy = (position.y - last.y) as f32;
+                    if dx != 0.0 || dy != 0.0 {
+                        example.mouse_drag(dx, dy);
                     }
                 }
                 self.last_cursor_pos = Some(position);
