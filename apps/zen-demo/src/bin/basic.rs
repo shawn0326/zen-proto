@@ -6,20 +6,20 @@ use zen_demo::{
     Example,
     orbit_camera_controller::{OrbitCameraController, OrbitCameraControllerOptions},
     run,
+    surface_state::SurfaceState,
 };
 use zen_renderer::{
+    FrameInput, GpuTimingReport, Renderer,
     camera::{Camera, PerspectiveProjection},
-    instance::Instance,
-    material, mesh,
-    render::{DefaultRenderer, RenderTarget, request_device_and_target},
-    texture::Texture,
+    device::request_device_and_queue,
+    mesh::{Instance, Material, Mesh, MeshFrameInput, MeshRenderer, Texture},
 };
 
 struct Demo {
     device: wgpu::Device,
     queue: wgpu::Queue,
-    target: RenderTarget,
-    renderer: DefaultRenderer,
+    surface: SurfaceState,
+    renderer: Renderer,
     projection: PerspectiveProjection,
     camera: Camera,
     debug_camera: Camera,
@@ -33,9 +33,14 @@ struct Demo {
 impl Example for Demo {
     async fn init(window: Arc<Window>) -> Self {
         let instance = wgpu::Instance::default();
+        let size = window.inner_size();
         let surface = instance.create_surface(window).unwrap();
-        let (device, queue, target) = request_device_and_target(&instance, surface).await;
-        let projection = PerspectiveProjection::default();
+        let (device, queue) = request_device_and_queue(&instance, &surface).await;
+        let surface = SurfaceState::new(&device, surface, size.width, size.height);
+        let projection = PerspectiveProjection {
+            aspect: surface.width() as f32 / surface.height() as f32,
+            ..Default::default()
+        };
         let camera = Camera::new(
             glam::Mat4::look_at_rh(
                 glam::vec3(0.0, 0.0, 10.0),
@@ -62,9 +67,9 @@ impl Example for Demo {
         });
 
         let meshes = vec![
-            mesh::Mesh::create_triangle(),
-            mesh::Mesh::create_box(),
-            mesh::Mesh::create_sphere(6),
+            Mesh::create_triangle(),
+            Mesh::create_box(),
+            Mesh::create_sphere(6),
         ];
 
         let textures = vec![
@@ -94,7 +99,7 @@ impl Example for Demo {
                 _ => (c, 0.0, x),
             };
 
-            materials.push(material::Material {
+            materials.push(Material {
                 albedo_factor: glam::Vec4::new(r + m, g + m, b + m, 1.0),
                 // emissive rgb + ao_strength in w
                 emissive_ao: glam::Vec4::new(0.0, 0.0, 0.0, 1.0),
@@ -119,13 +124,20 @@ impl Example for Demo {
             });
         }
 
-        let renderer = DefaultRenderer::new(
-            &device, &queue, &target, &meshes, &materials, &instances, &textures,
+        let mesh = MeshRenderer::new(
+            &device,
+            &queue,
+            surface.format(),
+            &meshes,
+            &materials,
+            &instances,
+            &textures,
         );
+        let renderer = Renderer::new(&device, mesh);
         Demo {
             device,
             queue,
-            target,
+            surface,
             renderer,
             projection,
             camera,
@@ -139,7 +151,10 @@ impl Example for Demo {
     }
 
     fn resize(&mut self, width: u32, height: u32) {
-        self.target.resize(width, height);
+        self.surface.resize(width, height);
+        if width == 0 || height == 0 {
+            return;
+        }
         self.projection.aspect = width as f32 / height as f32;
         self.camera.set_projection(self.projection);
         self.debug_camera.set_projection(self.projection);
@@ -151,7 +166,8 @@ impl Example for Demo {
         // Low-frequency stats: request once per ~120 frames, print when ready.
         self.frame_index += 1;
         if self.frame_index.is_multiple_of(120) {
-            self.renderer.request_render_stats();
+            self.renderer.mesh_mut().request_stats();
+            self.renderer.request_gpu_timing();
         }
 
         let debug_camera = if self.use_debug_camera {
@@ -159,18 +175,27 @@ impl Example for Demo {
         } else {
             None
         };
-        let target_changed = self.target.apply_pending_resize(&self.device);
-        self.renderer.render(
-            &self.device,
-            &self.queue,
-            &self.target,
-            self.camera,
-            debug_camera,
-            self.enable_occlusion_culling,
-            target_changed,
-        );
+        let Some(surface_texture) = self.surface.acquire(&self.device) else {
+            return;
+        };
+        self.renderer
+            .render(
+                &self.device,
+                &self.queue,
+                FrameInput {
+                    frame_index: self.frame_index,
+                    surface_texture: &surface_texture.texture,
+                    mesh: MeshFrameInput {
+                        camera: self.camera,
+                        debug_camera,
+                        enable_occlusion_culling: self.enable_occlusion_culling,
+                    },
+                },
+            )
+            .expect("FrameGraph rendering failed");
+        self.queue.present(surface_texture);
 
-        if let Some(stats) = self.renderer.take_render_stats(&self.device) {
+        if let Some(stats) = self.renderer.mesh_mut().take_stats(&self.device) {
             println!(
                 "Render stats: total={} main_cull_visible={} drawn={} (A: vis={} draw={} | B: vis={} draw={})",
                 stats.total_instances,
@@ -181,6 +206,9 @@ impl Example for Demo {
                 stats.list_b_visible,
                 stats.list_b_drawn,
             );
+        }
+        if let Some(timing) = self.renderer.take_gpu_timing() {
+            print_gpu_timing(timing);
         }
     }
 
@@ -227,5 +255,26 @@ fn load_texture_from_assets(name: &str) -> Texture {
         height,
         format: wgpu::TextureFormat::Rgba8UnormSrgb,
         pixels: rgba.into_raw(),
+    }
+}
+
+fn print_gpu_timing(timing: GpuTimingReport) {
+    match timing {
+        GpuTimingReport::Available {
+            frame_index,
+            frame_duration,
+            nodes,
+            ..
+        } => {
+            println!("GPU timing frame {frame_index}: total {frame_duration:?}");
+            for node in nodes {
+                println!("  {} ({:?}): {:?}", node.label, node.kind, node.duration);
+            }
+        }
+        GpuTimingReport::Unavailable {
+            frame_index,
+            reason,
+        } => println!("GPU timing frame {frame_index} unavailable: {reason:?}"),
+        _ => println!("GPU timing report uses an unknown future format"),
     }
 }

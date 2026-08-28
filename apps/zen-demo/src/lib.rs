@@ -4,6 +4,7 @@ pub mod frame_rate_tracker;
 pub mod gltf_loader;
 #[allow(dead_code)]
 pub mod orbit_camera_controller;
+pub mod surface_state;
 
 use frame_rate_tracker::FrameRateTracker;
 use pollster::FutureExt;

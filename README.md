@@ -4,8 +4,10 @@ Prototype GPU-driven renderer in Rust using wgpu.
 
 ## Workspace
 
-- `crates/zen-renderer`: GPU-driven renderer library.
-- `apps/zen-demo`: interactive demo applications and their assets.
+- `crates/zen-frame-graph`: renderer-agnostic, wgpu-specific compiler and GPU runtime with transient resource pooling.
+- `crates/zen-renderer`: GPU-driven renderer with a frame-composition `Renderer` and an explicit
+  Mesh-domain `MeshRenderer` made of internal visibility/draw stages and FrameGraph passes.
+- `apps/zen-demo`: interactive demo applications, window-surface integration, and assets.
 
 Run the demos from the workspace root:
 

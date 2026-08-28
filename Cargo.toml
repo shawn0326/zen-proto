@@ -1,10 +1,11 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/zen-frame-graph",
     "crates/zen-renderer",
     "apps/zen-demo",
 ]
-default-members = ["crates/zen-renderer"]
+default-members = ["crates/zen-frame-graph", "crates/zen-renderer"]
 
 [workspace.package]
 edition = "2024"
@@ -18,3 +19,5 @@ pollster = "0.4"
 rand = "0.9"
 image = "0.25"
 gltf = { version = "1", features = ["KHR_texture_transform"] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
