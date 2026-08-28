@@ -24,6 +24,8 @@ fn full_report_capture_round_trips() {
     let compiled = frame.compile(CompileOptions::full_report()).unwrap();
     let capture = FrameGraphCaptureV1::try_from(compiled.report().unwrap()).unwrap();
     let json = serde_json::to_string_pretty(&capture).unwrap();
+    assert!(!json.contains("recording_order"));
+    assert!(!json.contains("NotReachableFromRoot"));
     let decoded: FrameGraphCaptureV1 = serde_json::from_str(&json).unwrap();
     assert_eq!(decoded, capture);
     assert_eq!(decoded.schema, "frame-graph-capture-v1");
@@ -64,6 +66,28 @@ fn callbacks_and_native_runtime_state_are_not_captured() {
     assert!(!json.contains("executors"));
     assert!(!json.contains("resource_pool"));
     assert!(!json.contains("retained_count"));
+}
+
+#[test]
+fn culling_metadata_does_not_change_capture_v1() {
+    let mut graph = FrameGraph::new();
+    let mut frame = graph.begin_frame();
+    let buffer = frame.create_buffer(BufferDesc::new("culled", 4)).unwrap();
+    let mut pass = frame.compute_pass("culled-write");
+    let _ = pass
+        .storage_buffer_write(buffer, BufferRange::whole(), WriteContents::Overwrite)
+        .unwrap();
+    pass.finish().unwrap();
+    let compiled = frame.compile(CompileOptions::full_report()).unwrap();
+    let report = compiled.report().unwrap();
+    assert_eq!(report.full.as_ref().unwrap().culled_nodes.len(), 1);
+
+    let capture = FrameGraphCaptureV1::try_from(report).unwrap();
+    let json = serde_json::to_string(&capture).unwrap();
+    assert!(!json.contains("recording_order"));
+    assert!(!json.contains("NotReachableFromRoot"));
+    let decoded: FrameGraphCaptureV1 = serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded, capture);
 }
 
 #[test]

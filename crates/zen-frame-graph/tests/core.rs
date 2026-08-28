@@ -1,12 +1,92 @@
 use zen_frame_graph::{
-    AccessRole, BufferDesc, BufferRange, BufferTextureCopyLocation, ColorAttachmentOps,
-    CompileOptions, DependencyKind, FrameGraph, FrameGraphError, HazardKind, ImportBufferOptions,
-    ImportTextureOptions, InitialContents, ReportLevel, RootReason, TextureCopyLocation,
-    TextureDesc, TextureViewDesc, UsagePolicy, WriteContents,
+    AccessRole, BufferDesc, BufferRange, BufferTextureCopyLocation, ClearBufferOp,
+    ColorAttachmentOps, CompileOptions, CulledNodeReason, DependencyKind, FrameGraph,
+    FrameGraphError, HazardKind, ImportBufferOptions, ImportTextureOptions, InitialContents,
+    ReportLevel, RootReason, TextureCopyLocation, TextureDesc, TextureViewDesc, UsagePolicy,
+    WriteContents,
 };
 
 fn full_options() -> CompileOptions {
     CompileOptions::full_report()
+}
+
+#[test]
+fn recording_descriptor_queries_return_snapshotted_and_normalized_metadata() {
+    let mut graph = FrameGraph::new();
+    let mut frame = graph.begin_frame();
+    let texture = frame
+        .create_texture(TextureDesc {
+            label: "array".into(),
+            size: wgpu::Extent3d {
+                width: 8,
+                height: 8,
+                depth_or_array_layers: 6,
+            },
+            mip_level_count: 4,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            view_formats: vec![wgpu::TextureFormat::Rgba8UnormSrgb],
+            usage: UsagePolicy::Infer,
+        })
+        .unwrap();
+    let buffer = frame.create_buffer(BufferDesc::new("data", 64)).unwrap();
+    let view = frame
+        .create_texture_view(
+            texture,
+            TextureViewDesc {
+                label: "layers".into(),
+                format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                base_mip_level: 1,
+                mip_level_count: None,
+                base_array_layer: 2,
+                array_layer_count: Some(3),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+    assert_eq!(frame.texture_desc(texture).unwrap().label, "array");
+    assert_eq!(frame.buffer_desc(buffer).unwrap().size, 64);
+    let normalized = frame.texture_view_desc(view).unwrap();
+    assert_eq!(normalized.label, "layers");
+    assert_eq!(normalized.format, wgpu::TextureFormat::Rgba8UnormSrgb);
+    assert_eq!(normalized.dimension, wgpu::TextureViewDimension::D2Array);
+    assert_eq!(normalized.base_mip_level, 1);
+    assert_eq!(normalized.mip_level_count, 3);
+    assert_eq!(normalized.base_array_layer, 2);
+    assert_eq!(normalized.array_layer_count, Some(3));
+}
+
+#[test]
+fn d3_view_descriptor_normalizes_without_array_layers() {
+    let mut graph = FrameGraph::new();
+    let mut frame = graph.begin_frame();
+    let texture = frame
+        .create_texture(TextureDesc {
+            label: "volume".into(),
+            size: wgpu::Extent3d {
+                width: 8,
+                height: 4,
+                depth_or_array_layers: 4,
+            },
+            mip_level_count: 3,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D3,
+            format: wgpu::TextureFormat::R8Unorm,
+            view_formats: vec![],
+            usage: UsagePolicy::Infer,
+        })
+        .unwrap();
+    let view = frame
+        .create_texture_view(texture, TextureViewDesc::default())
+        .unwrap();
+    let normalized = frame.texture_view_desc(view).unwrap();
+    assert_eq!(normalized.dimension, wgpu::TextureViewDimension::D3);
+    assert_eq!(normalized.mip_level_count, 3);
+    assert_eq!(normalized.base_array_layer, 0);
+    assert_eq!(normalized.array_layer_count, None);
 }
 
 #[test]
@@ -383,6 +463,40 @@ fn same_named_sibling_groups_keep_distinct_ids_and_culled_provenance() {
     assert_eq!(full.debug_groups[0].label, full.debug_groups[1].label);
     assert_eq!(full.culled_nodes.len(), 1);
     assert_eq!(full.culled_nodes[0].debug_group, Some(second));
+    assert_eq!(
+        full.culled_nodes[0].reason,
+        CulledNodeReason::NotReachableFromRoot
+    );
+    assert_eq!(full.culled_nodes[0].recording_order, 0);
+}
+
+#[test]
+fn reports_preserve_original_order_across_retained_and_culled_nodes() {
+    let mut graph = FrameGraph::new();
+    let mut frame = graph.begin_frame();
+    let unused = frame.create_buffer(BufferDesc::new("unused", 4)).unwrap();
+    let mut first = frame.compute_pass("recorded-first");
+    let _ = first
+        .storage_buffer_write(unused, BufferRange::whole(), WriteContents::Overwrite)
+        .unwrap();
+    first.finish().unwrap();
+    let imported = frame
+        .import_buffer(
+            BufferDesc::new("input", 4),
+            ImportBufferOptions::new(InitialContents::Defined),
+        )
+        .unwrap();
+    let mut second = frame.command_pass("recorded-second");
+    let _ = second
+        .storage_buffer_read(imported, BufferRange::whole())
+        .unwrap();
+    second.finish_command(|_| Ok(())).unwrap();
+
+    let compiled = frame.compile(full_options()).unwrap();
+    let report = compiled.report().unwrap().full.as_ref().unwrap();
+    assert_eq!(report.culled_nodes[0].recording_order, 0);
+    assert_eq!(report.nodes[0].recording_order, 1);
+    assert_eq!(report.nodes[0].label, "recorded-second");
 }
 
 #[test]
@@ -742,6 +856,44 @@ fn declarative_copy_and_clear_nodes_participate_in_content_flow() {
 }
 
 #[test]
+fn grouped_clear_records_ordered_precise_accesses() {
+    let mut graph = FrameGraph::new();
+    let mut frame = graph.begin_frame();
+    let first = frame.create_buffer(BufferDesc::new("first", 16)).unwrap();
+    let second = frame.create_buffer(BufferDesc::new("second", 16)).unwrap();
+    let clear = frame
+        .clear_buffers(
+            "clear-both",
+            [
+                ClearBufferOp::new(first, BufferRange::new(4, 4)),
+                ClearBufferOp::new(second, BufferRange::new(8, 8)),
+            ],
+        )
+        .unwrap();
+    frame
+        .mark_buffer_root(first, BufferRange::new(4, 4), RootReason::Output)
+        .unwrap();
+    frame
+        .mark_buffer_root(second, BufferRange::new(8, 8), RootReason::Output)
+        .unwrap();
+
+    let compiled = frame.compile(full_options()).unwrap();
+    let report = compiled.report().unwrap().full.as_ref().unwrap();
+    assert_eq!(report.nodes[0].id, clear);
+    assert_eq!(report.nodes[0].recording_order, 0);
+    let accesses = report
+        .accesses
+        .iter()
+        .filter(|access| access.pass == clear)
+        .collect::<Vec<_>>();
+    assert_eq!(accesses.len(), 2);
+    assert_eq!(accesses[0].resource, first.id());
+    assert_eq!(accesses[0].role, AccessRole::BufferCopyDst);
+    assert_eq!(accesses[1].resource, second.id());
+    assert_eq!(accesses[1].role, AccessRole::BufferCopyDst);
+}
+
+#[test]
 fn clear_and_copy_operations_report_stable_validation_errors() {
     let mut graph = FrameGraph::new();
     let mut frame = graph.begin_frame();
@@ -756,6 +908,10 @@ fn clear_and_copy_operations_report_stable_validation_errors() {
         error,
         FrameGraphError::InvalidNodeOperation { .. }
     ));
+    let error = frame
+        .clear_buffers("empty-clear", core::iter::empty())
+        .unwrap_err();
+    assert_eq!(error.code(), "FG1106");
 
     let texture = frame
         .import_texture(

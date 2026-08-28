@@ -187,6 +187,20 @@ pub struct TextureViewDesc {
     pub array_layer_count: Option<u32>,
 }
 
+/// Fully resolved recording-time metadata for a logical texture view.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct NormalizedTextureViewDesc {
+    pub label: String,
+    pub format: wgpu::TextureFormat,
+    pub dimension: wgpu::TextureViewDimension,
+    pub aspect: wgpu::TextureAspect,
+    pub base_mip_level: u32,
+    pub mip_level_count: u32,
+    pub base_array_layer: u32,
+    pub array_layer_count: Option<u32>,
+}
+
 impl Default for TextureViewDesc {
     fn default() -> Self {
         Self {
@@ -199,6 +213,45 @@ impl Default for TextureViewDesc {
             base_array_layer: 0,
             array_layer_count: None,
         }
+    }
+}
+
+pub(crate) fn normalize_texture_view_descriptor(
+    texture: &TextureDesc,
+    view: &TextureViewDesc,
+) -> NormalizedTextureViewDesc {
+    let dimension = view.dimension.unwrap_or(match texture.dimension {
+        wgpu::TextureDimension::D1 => wgpu::TextureViewDimension::D1,
+        wgpu::TextureDimension::D2 if texture.size.depth_or_array_layers == 1 => {
+            wgpu::TextureViewDimension::D2
+        }
+        wgpu::TextureDimension::D2 => wgpu::TextureViewDimension::D2Array,
+        wgpu::TextureDimension::D3 => wgpu::TextureViewDimension::D3,
+    });
+    let mip_level_count = view
+        .mip_level_count
+        .unwrap_or(texture.mip_level_count - view.base_mip_level);
+    let array_layer_count = if texture.dimension == wgpu::TextureDimension::D3 {
+        None
+    } else {
+        Some(
+            view.array_layer_count
+                .unwrap_or(texture.size.depth_or_array_layers - view.base_array_layer),
+        )
+    };
+    NormalizedTextureViewDesc {
+        label: view.label.clone(),
+        format: view.format.unwrap_or(texture.format),
+        dimension,
+        aspect: if texture.format.has_depth_aspect() {
+            wgpu::TextureAspect::DepthOnly
+        } else {
+            wgpu::TextureAspect::All
+        },
+        base_mip_level: view.base_mip_level,
+        mip_level_count,
+        base_array_layer: view.base_array_layer,
+        array_layer_count,
     }
 }
 
@@ -223,6 +276,19 @@ macro_rules! define_handle {
 define_handle!(Texture, ResourceId);
 define_handle!(TextureView, ViewId);
 define_handle!(Buffer, ResourceId);
+
+/// One ordered zero-fill operation in a structured clear-buffer node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClearBufferOp<'frame> {
+    pub target: Buffer<'frame>,
+    pub range: BufferRange,
+}
+
+impl<'frame> ClearBufferOp<'frame> {
+    pub const fn new(target: Buffer<'frame>, range: BufferRange) -> Self {
+        Self { target, range }
+    }
+}
 
 /// One logical texture subresource location used by a declarative copy operation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

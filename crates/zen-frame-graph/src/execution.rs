@@ -3,11 +3,10 @@ use std::collections::HashMap;
 use crate::{
     AccessId, AccessToken, BufferAccessMarker, ColorAttachmentOps, DebugGroupId,
     DepthAttachmentOps, ExecutionOptions, ExecutionSegmentKind, FrameGraphError, NodeKind, PassId,
-    ResourceDescriptor, ResourceId, ResourceOrigin, ResourceUsage, TextureAccessMarker,
-    TextureDesc, ViewId,
+    ResourceId, ResourceOrigin, ResourceUsage, TextureAccessMarker,
     compiler::{CompiledFrame, PhysicalAllocationPlan, allocation_key_and_bytes},
     gpu_timing::{ActiveGpuTiming, TimingSetup},
-    model::{AccessRecord, NodeRecord, NormalizedRange, ResourceRecord, ViewRecord},
+    model::{AccessRecord, NodeRecord, ResourceRecord},
     resource_pool::TransientResourceLease,
 };
 
@@ -105,6 +104,26 @@ pub(crate) struct ClearBufferOperation {
     pub(crate) size: u64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct ExecutionTextureViewDescriptor {
+    pub(crate) label: String,
+    pub(crate) format: wgpu::TextureFormat,
+    pub(crate) dimension: wgpu::TextureViewDimension,
+    pub(crate) usage: wgpu::TextureUsages,
+    pub(crate) aspect: wgpu::TextureAspect,
+    pub(crate) base_mip_level: u32,
+    pub(crate) mip_level_count: u32,
+    pub(crate) base_array_layer: u32,
+    pub(crate) array_layer_count: Option<u32>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ExecutionViewPlan {
+    pub(crate) resource: ResourceId,
+    pub(crate) descriptor: ExecutionTextureViewDescriptor,
+    pub(crate) accesses: Vec<AccessId>,
+}
+
 pub(crate) enum NodeExecutor<'frame> {
     Render {
         color_attachments: Vec<RenderColorAttachment>,
@@ -113,7 +132,7 @@ pub(crate) enum NodeExecutor<'frame> {
     },
     Compute(ComputeCallback<'frame>),
     Copy(Vec<CopyOperation>),
-    ClearBuffer(ClearBufferOperation),
+    ClearBuffer(Vec<ClearBufferOperation>),
     Command(CommandCallback<'frame>),
     External(ExternalCallback<'frame>),
 }
@@ -254,7 +273,6 @@ fn execute_internal(
         plan,
         report: _,
         resources,
-        views,
         native_resources,
         mut executors,
     } = frame;
@@ -323,8 +341,7 @@ fn execute_internal(
         .flat_map(|node| node.accesses.iter().cloned())
         .map(|access| (access.id, access))
         .collect::<HashMap<_, _>>();
-    let execution_views =
-        create_execution_views(&plan.retained_nodes, &resources, &views, &execution_native)?;
+    let execution_views = create_execution_views(&plan.execution_views, &execution_native)?;
     let node_map = plan
         .retained_nodes
         .iter()
@@ -479,9 +496,15 @@ fn execute_internal(
                                 encode_copy_operation(&mut encoder, operation, &execution_native)?;
                             }
                         }
-                        (NodeKind::ClearBuffer, NodeExecutor::ClearBuffer(operation)) => {
-                            let buffer = native_buffer(&execution_native, operation.buffer)?;
-                            encoder.clear_buffer(buffer, operation.offset, Some(operation.size));
+                        (NodeKind::ClearBuffer, NodeExecutor::ClearBuffer(operations)) => {
+                            for operation in operations {
+                                let buffer = native_buffer(&execution_native, operation.buffer)?;
+                                encoder.clear_buffer(
+                                    buffer,
+                                    operation.offset,
+                                    Some(operation.size),
+                                );
+                            }
                         }
                         (NodeKind::Command, NodeExecutor::Command(callback)) => {
                             callback(CommandContext {
@@ -725,9 +748,11 @@ fn preflight(
                 Some(_) => return invalid_executor(node, "copy operations"),
             },
             NodeKind::ClearBuffer => match executors.get(&node.id) {
-                Some(NodeExecutor::ClearBuffer(_)) => {}
+                Some(NodeExecutor::ClearBuffer(operations)) if !operations.is_empty() => {}
+                Some(NodeExecutor::ClearBuffer(_)) | None => {
+                    return missing_executor(node, "clear-buffer operations");
+                }
                 Some(_) => return invalid_executor(node, "clear-buffer operation"),
-                None => return missing_executor(node, "clear-buffer operation"),
             },
         }
 
@@ -949,112 +974,31 @@ fn validate_effective_usage(
 }
 
 fn create_execution_views(
-    nodes: &[NodeRecord],
-    resources: &[ResourceRecord],
-    views: &[ViewRecord],
+    plans: &[ExecutionViewPlan],
     native: &HashMap<ResourceId, NativeResource>,
 ) -> Result<HashMap<AccessId, wgpu::TextureView>, FrameGraphError> {
-    let resources_by_id = resources
-        .iter()
-        .map(|resource| (resource.id, resource))
-        .collect::<HashMap<_, _>>();
-    let views_by_id = views
-        .iter()
-        .map(|view| (view.id, view))
-        .collect::<HashMap<ViewId, _>>();
     let mut result = HashMap::new();
-    for access in nodes.iter().flat_map(|node| &node.accesses) {
-        if access.role.texture_usage().is_none()
-            || matches!(
-                access.role,
-                crate::AccessRole::TextureCopySrc | crate::AccessRole::TextureCopyDst
-            )
-        {
-            continue;
-        }
-        let resource = resources_by_id
-            .get(&access.resource)
-            .copied()
-            .ok_or_else(|| FrameGraphError::Internal {
-                message: format!("unknown texture resource {}", access.resource),
-            })?;
-        let ResourceDescriptor::Texture(desc) = &resource.descriptor else {
-            return Err(FrameGraphError::Internal {
-                message: format!("texture access {} references a buffer", access.id),
-            });
-        };
-        let Some(NativeResource::Texture(texture)) = native.get(&access.resource) else {
+    for plan in plans {
+        let Some(NativeResource::Texture(texture)) = native.get(&plan.resource) else {
             return Err(FrameGraphError::MissingNativeBinding {
-                resource: access.resource,
+                resource: plan.resource,
             });
         };
-        let explicit = access.view.and_then(|id| views_by_id.get(&id).copied());
-        let view = create_view(texture, desc, access, explicit)?;
-        result.insert(access.id, view);
+        let descriptor = &plan.descriptor;
+        let view = texture.create_view(&wgpu::TextureViewDescriptor {
+            label: (!descriptor.label.is_empty()).then_some(descriptor.label.as_str()),
+            format: Some(descriptor.format),
+            dimension: Some(descriptor.dimension),
+            usage: Some(descriptor.usage),
+            aspect: descriptor.aspect,
+            base_mip_level: descriptor.base_mip_level,
+            mip_level_count: Some(descriptor.mip_level_count),
+            base_array_layer: descriptor.base_array_layer,
+            array_layer_count: descriptor.array_layer_count,
+        });
+        for access in &plan.accesses {
+            result.insert(*access, view.clone());
+        }
     }
     Ok(result)
-}
-
-fn create_view(
-    texture: &wgpu::Texture,
-    texture_desc: &TextureDesc,
-    access: &AccessRecord,
-    explicit: Option<&ViewRecord>,
-) -> Result<wgpu::TextureView, FrameGraphError> {
-    let NormalizedRange::Texture(regions) = &access.range else {
-        return Err(FrameGraphError::Internal {
-            message: format!("texture access {} has a buffer range", access.id),
-        });
-    };
-    let first = regions.first().ok_or_else(|| FrameGraphError::Internal {
-        message: format!("texture access {} has an empty range", access.id),
-    })?;
-    let label = explicit
-        .map(|view| view.descriptor.label.as_str())
-        .filter(|label| !label.is_empty());
-    let format = explicit.and_then(|view| view.descriptor.format);
-    let dimension = explicit
-        .and_then(|view| view.descriptor.dimension)
-        .or_else(|| infer_view_dimension(texture_desc));
-    let base_mip_level = explicit
-        .map(|view| view.descriptor.base_mip_level)
-        .unwrap_or(first.base_mip_level);
-    let mip_level_count = explicit
-        .and_then(|view| view.descriptor.mip_level_count)
-        .or(Some(regions.len() as u32));
-    let (base_array_layer, array_layer_count) =
-        if texture_desc.dimension == wgpu::TextureDimension::D3 {
-            (0, None)
-        } else {
-            (
-                explicit
-                    .map(|view| view.descriptor.base_array_layer)
-                    .unwrap_or(first.base_slice),
-                explicit
-                    .and_then(|view| view.descriptor.array_layer_count)
-                    .or(Some(first.slice_count)),
-            )
-        };
-    Ok(texture.create_view(&wgpu::TextureViewDescriptor {
-        label,
-        format,
-        dimension,
-        usage: access.role.texture_usage(),
-        aspect: first.aspect,
-        base_mip_level,
-        mip_level_count,
-        base_array_layer,
-        array_layer_count,
-    }))
-}
-
-fn infer_view_dimension(desc: &TextureDesc) -> Option<wgpu::TextureViewDimension> {
-    Some(match desc.dimension {
-        wgpu::TextureDimension::D1 => wgpu::TextureViewDimension::D1,
-        wgpu::TextureDimension::D2 if desc.size.depth_or_array_layers == 1 => {
-            wgpu::TextureViewDimension::D2
-        }
-        wgpu::TextureDimension::D2 => wgpu::TextureViewDimension::D2Array,
-        wgpu::TextureDimension::D3 => wgpu::TextureViewDimension::D3,
-    })
 }

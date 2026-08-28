@@ -7,14 +7,17 @@ use std::{
 
 use crate::{
     AccessMode, AccessReport, AccessRole, AllocationId, AllocationReport, CompilationReport,
-    CompilationSummary, CompilationTimings, CompileOptions, DebugGroupReport, DependencyKind,
-    DependencyReport, ExecutionOptions, ExecutionSegmentKind, ExecutionSegmentReport, Frame,
-    FrameGraphError, FullCompilationReport, HazardKind, InitialContents, NodeKind, NodeReport,
-    PassId, ReportLevel, ResourceDescriptor, ResourceId, ResourceKind, ResourceLifetime,
-    ResourceOrigin, ResourceRange, ResourceReport, ResourceUsage, RootReport,
-    TextureSubresourceRange, UndefinedCause, UsagePolicy, ValueId, ValueKind, ValueReport,
-    ViewReport,
-    model::{AccessRecord, NodeRecord, NormalizedRange, ResourceRecord},
+    CompilationSummary, CompilationTimings, CompileOptions, CulledNodeReason, CulledNodeReport,
+    DebugGroupReport, DependencyKind, DependencyReport, ExecutionOptions, ExecutionSegmentKind,
+    ExecutionSegmentReport, Frame, FrameGraphError, FullCompilationReport, HazardKind,
+    InitialContents, NodeKind, NodeReport, PassId, ReportLevel, ResourceDescriptor, ResourceId,
+    ResourceKind, ResourceLifetime, ResourceOrigin, ResourceRange, ResourceReport, ResourceUsage,
+    RootReport, TextureSubresourceRange, UndefinedCause, UsagePolicy, ValueId, ValueKind,
+    ValueReport, ViewId, ViewReport,
+    execution::{ExecutionTextureViewDescriptor, ExecutionViewPlan},
+    model::{
+        AccessRecord, DebugGroupRecord, NodeRecord, NormalizedRange, ResourceRecord, ViewRecord,
+    },
 };
 
 #[derive(Clone, Debug)]
@@ -23,8 +26,9 @@ pub(crate) struct CompiledPlan {
     pub(crate) usages: HashMap<ResourceId, ResourceUsage>,
     pub(crate) allocations: Vec<AllocationReport>,
     pub(crate) physical_allocations: Vec<PhysicalAllocationPlan>,
+    pub(crate) execution_views: Vec<ExecutionViewPlan>,
     pub(crate) execution_segments: Vec<ExecutionSegmentReport>,
-    pub(crate) debug_groups: Vec<crate::model::DebugGroupRecord>,
+    pub(crate) debug_groups: Vec<DebugGroupRecord>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -105,7 +109,6 @@ pub struct CompiledFrame<'frame> {
     pub(crate) plan: CompiledPlan,
     pub(crate) report: Option<CompilationReport>,
     pub(crate) resources: Vec<ResourceRecord>,
-    pub(crate) views: Vec<crate::model::ViewRecord>,
     pub(crate) native_resources: HashMap<ResourceId, crate::execution::NativeResource>,
     pub(crate) executors: HashMap<PassId, crate::execution::NodeExecutor<'frame>>,
 }
@@ -294,7 +297,10 @@ pub(crate) fn compile<'frame>(
         .filter(|node| retained.contains(&node.id))
         .cloned()
         .collect();
+    let execution_views =
+        build_execution_view_plans(&retained_nodes, &frame.resources, &frame.views)?;
     let execution_segments = build_execution_segments(&retained_nodes);
+    let runtime_debug_groups = retained_debug_groups(&frame.debug_groups, &retained_nodes);
     timings.planning_ns = elapsed_ns(planning_start);
 
     let plan = CompiledPlan {
@@ -302,8 +308,9 @@ pub(crate) fn compile<'frame>(
         usages: usages.clone(),
         allocations: allocations.clone(),
         physical_allocations,
+        execution_views,
         execution_segments: execution_segments.clone(),
-        debug_groups: frame.debug_groups.clone(),
+        debug_groups: runtime_debug_groups,
     };
 
     let report = if options.report_level == ReportLevel::None {
@@ -341,20 +348,197 @@ pub(crate) fn compile<'frame>(
     let Frame {
         graph,
         resources,
-        views,
+        views: _,
         native_resources,
         executors,
         ..
     } = frame;
+    let mut runtime_resource_ids = plan
+        .retained_nodes
+        .iter()
+        .flat_map(|node| node.accesses.iter().map(|access| access.resource))
+        .collect::<BTreeSet<_>>();
+    for allocation in &plan.physical_allocations {
+        runtime_resource_ids.extend(allocation.resource_ids.iter().copied());
+    }
+    let resources = resources
+        .into_iter()
+        .filter(|resource| runtime_resource_ids.contains(&resource.id))
+        .collect();
+    let mut native_resources = native_resources;
+    native_resources.retain(|resource, _| runtime_resource_ids.contains(resource));
+    let mut executors = executors;
+    executors.retain(|pass, _| retained.contains(pass));
+
     Ok(CompiledFrame {
         graph,
         plan,
         report,
         resources,
-        views,
         native_resources,
         executors,
     })
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum ExecutionViewKey {
+    Explicit(ViewId),
+    Implicit {
+        resource: ResourceId,
+        descriptor: ExecutionTextureViewDescriptor,
+    },
+}
+
+fn build_execution_view_plans(
+    nodes: &[NodeRecord],
+    resources: &[ResourceRecord],
+    views: &[ViewRecord],
+) -> Result<Vec<ExecutionViewPlan>, FrameGraphError> {
+    let resources = resources
+        .iter()
+        .map(|resource| (resource.id, resource))
+        .collect::<HashMap<_, _>>();
+    let views = views
+        .iter()
+        .map(|view| (view.id, view))
+        .collect::<HashMap<_, _>>();
+    let mut indices = HashMap::<ExecutionViewKey, usize>::new();
+    let mut plans = Vec::<ExecutionViewPlan>::new();
+
+    for access in nodes.iter().flat_map(|node| &node.accesses) {
+        let Some(usage) = access.role.texture_usage() else {
+            continue;
+        };
+        if matches!(
+            access.role,
+            AccessRole::TextureCopySrc | AccessRole::TextureCopyDst
+        ) {
+            continue;
+        }
+        let resource =
+            resources
+                .get(&access.resource)
+                .copied()
+                .ok_or_else(|| FrameGraphError::Internal {
+                    message: format!("unknown texture resource {}", access.resource),
+                })?;
+        let ResourceDescriptor::Texture(texture) = &resource.descriptor else {
+            return Err(FrameGraphError::Internal {
+                message: format!("texture access {} references a buffer", access.id),
+            });
+        };
+        let explicit = access.view.and_then(|view| views.get(&view).copied());
+        let descriptor = execution_view_descriptor(texture, access, explicit, usage)?;
+        let key = match access.view {
+            Some(view) => ExecutionViewKey::Explicit(view),
+            None => ExecutionViewKey::Implicit {
+                resource: access.resource,
+                descriptor: descriptor.clone(),
+            },
+        };
+        if let Some(index) = indices.get(&key).copied() {
+            let plan = &mut plans[index];
+            plan.descriptor.usage |= usage;
+            plan.accesses.push(access.id);
+        } else {
+            let index = plans.len();
+            indices.insert(key, index);
+            plans.push(ExecutionViewPlan {
+                resource: access.resource,
+                descriptor,
+                accesses: vec![access.id],
+            });
+        }
+    }
+    Ok(plans)
+}
+
+fn execution_view_descriptor(
+    texture: &crate::TextureDesc,
+    access: &AccessRecord,
+    explicit: Option<&ViewRecord>,
+    usage: wgpu::TextureUsages,
+) -> Result<ExecutionTextureViewDescriptor, FrameGraphError> {
+    let NormalizedRange::Texture(regions) = &access.range else {
+        return Err(FrameGraphError::Internal {
+            message: format!("texture access {} has a buffer range", access.id),
+        });
+    };
+    let first = regions.first().ok_or_else(|| FrameGraphError::Internal {
+        message: format!("texture access {} has an empty range", access.id),
+    })?;
+    let dimension = explicit
+        .and_then(|view| view.descriptor.dimension)
+        .unwrap_or_else(|| infer_view_dimension(texture));
+    let (base_array_layer, array_layer_count) = if texture.dimension == wgpu::TextureDimension::D3 {
+        (0, None)
+    } else {
+        (
+            explicit
+                .map(|view| view.descriptor.base_array_layer)
+                .unwrap_or(first.base_slice),
+            Some(
+                explicit
+                    .and_then(|view| view.descriptor.array_layer_count)
+                    .unwrap_or(first.slice_count),
+            ),
+        )
+    };
+    Ok(ExecutionTextureViewDescriptor {
+        label: explicit
+            .map(|view| view.descriptor.label.clone())
+            .unwrap_or_default(),
+        format: explicit
+            .and_then(|view| view.descriptor.format)
+            .unwrap_or(texture.format),
+        dimension,
+        usage,
+        aspect: first.aspect,
+        base_mip_level: explicit
+            .map(|view| view.descriptor.base_mip_level)
+            .unwrap_or(first.base_mip_level),
+        mip_level_count: explicit
+            .and_then(|view| view.descriptor.mip_level_count)
+            .unwrap_or(u32::try_from(regions.len()).unwrap_or(u32::MAX)),
+        base_array_layer,
+        array_layer_count,
+    })
+}
+
+fn infer_view_dimension(texture: &crate::TextureDesc) -> wgpu::TextureViewDimension {
+    match texture.dimension {
+        wgpu::TextureDimension::D1 => wgpu::TextureViewDimension::D1,
+        wgpu::TextureDimension::D2 if texture.size.depth_or_array_layers == 1 => {
+            wgpu::TextureViewDimension::D2
+        }
+        wgpu::TextureDimension::D2 => wgpu::TextureViewDimension::D2Array,
+        wgpu::TextureDimension::D3 => wgpu::TextureViewDimension::D3,
+    }
+}
+
+fn retained_debug_groups(
+    groups: &[DebugGroupRecord],
+    nodes: &[NodeRecord],
+) -> Vec<DebugGroupRecord> {
+    let by_id = groups
+        .iter()
+        .map(|group| (group.id, group))
+        .collect::<HashMap<_, _>>();
+    let mut retained = BTreeSet::new();
+    for node in nodes {
+        let mut current = node.debug_group;
+        while let Some(group) = current {
+            if !retained.insert(group) {
+                break;
+            }
+            current = by_id.get(&group).and_then(|record| record.parent);
+        }
+    }
+    groups
+        .iter()
+        .filter(|group| retained.contains(&group.id))
+        .cloned()
+        .collect()
 }
 
 fn validate_recording(frame: &Frame<'_>) -> Result<(), FrameGraphError> {
@@ -1137,8 +1321,9 @@ fn build_full_report(
     allocation_by_resource: &HashMap<ResourceId, AllocationId>,
     execution_segments: Vec<ExecutionSegmentReport>,
 ) -> FullCompilationReport {
-    let node_report = |node: &NodeRecord| NodeReport {
+    let node_report = |recording_order: usize, node: &NodeRecord| NodeReport {
         id: node.id,
+        recording_order: u32::try_from(recording_order).unwrap_or(u32::MAX),
         kind: node.kind,
         label: node.label.clone(),
         side_effect: node.side_effect,
@@ -1148,14 +1333,24 @@ fn build_full_report(
         nodes: frame
             .nodes
             .iter()
-            .filter(|node| retained.contains(&node.id))
-            .map(node_report)
+            .enumerate()
+            .filter(|(_, node)| retained.contains(&node.id))
+            .map(|(order, node)| node_report(order, node))
             .collect(),
         culled_nodes: frame
             .nodes
             .iter()
-            .filter(|node| !retained.contains(&node.id))
-            .map(node_report)
+            .enumerate()
+            .filter(|(_, node)| !retained.contains(&node.id))
+            .map(|(recording_order, node)| CulledNodeReport {
+                id: node.id,
+                recording_order: u32::try_from(recording_order).unwrap_or(u32::MAX),
+                kind: node.kind,
+                label: node.label.clone(),
+                side_effect: node.side_effect,
+                debug_group: node.debug_group,
+                reason: CulledNodeReason::NotReachableFromRoot,
+            })
             .collect(),
         resources: frame
             .resources
@@ -1292,4 +1487,141 @@ fn aspect_key(aspect: wgpu::TextureAspect) -> u8 {
 
 fn elapsed_ns(start: Instant) -> u64 {
     u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        BufferDesc, BufferRange, ColorAttachmentOps, CompileOptions, FrameGraph,
+        ImportBufferOptions, ImportTextureOptions, InitialContents, TextureDesc, TextureViewDesc,
+        WriteContents,
+    };
+
+    #[test]
+    fn explicit_execution_view_unions_only_retained_usage() {
+        let mut graph = FrameGraph::new();
+        let mut frame = graph.begin_frame();
+        let texture = frame
+            .import_texture(
+                TextureDesc::new_2d("shared", 4, 4, wgpu::TextureFormat::Rgba8Unorm),
+                ImportTextureOptions::new(InitialContents::Defined),
+            )
+            .unwrap();
+        let view = frame
+            .create_texture_view(texture, TextureViewDesc::default())
+            .unwrap();
+        let mut sampled = frame.command_pass("sampled");
+        let _ = sampled.sampled_texture(view).unwrap();
+        sampled.finish_command(|_| Ok(())).unwrap();
+        let mut storage = frame.command_pass("storage");
+        let _ = storage.storage_texture_read(view).unwrap();
+        storage.finish_command(|_| Ok(())).unwrap();
+        let mut culled_attachment = frame.render_pass("culled-attachment");
+        culled_attachment.set_side_effect(false);
+        let _ = culled_attachment
+            .color_attachment(view, ColorAttachmentOps::clear_store(wgpu::Color::BLACK))
+            .unwrap();
+        culled_attachment.finish_render(|_| Ok(())).unwrap();
+
+        let compiled = frame.compile(CompileOptions::default()).unwrap();
+        assert_eq!(compiled.plan.execution_views.len(), 1);
+        assert_eq!(compiled.plan.execution_views[0].accesses.len(), 2);
+        assert_eq!(
+            compiled.plan.execution_views[0].descriptor.usage,
+            wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING
+        );
+    }
+
+    #[test]
+    fn aliased_logical_textures_keep_distinct_execution_views() {
+        let mut graph = FrameGraph::new();
+        let mut frame = graph.begin_frame();
+        let first = frame
+            .create_texture(TextureDesc::new_2d(
+                "first",
+                4,
+                4,
+                wgpu::TextureFormat::Rgba8Unorm,
+            ))
+            .unwrap();
+        let second = frame
+            .create_texture(TextureDesc::new_2d(
+                "second",
+                4,
+                4,
+                wgpu::TextureFormat::Rgba8Unorm,
+            ))
+            .unwrap();
+        let mut first_pass = frame.command_pass("first-write");
+        let _ = first_pass
+            .storage_texture_write(first, WriteContents::Overwrite)
+            .unwrap();
+        first_pass.finish_command(|_| Ok(())).unwrap();
+        let mut second_pass = frame.command_pass("second-write");
+        let _ = second_pass
+            .storage_texture_write(second, WriteContents::Overwrite)
+            .unwrap();
+        second_pass.finish_command(|_| Ok(())).unwrap();
+
+        let compiled = frame.compile(CompileOptions::default()).unwrap();
+        assert_eq!(compiled.plan.physical_allocations.len(), 1);
+        assert_eq!(compiled.plan.execution_views.len(), 2);
+        assert_ne!(
+            compiled.plan.execution_views[0].resource,
+            compiled.plan.execution_views[1].resource
+        );
+    }
+
+    #[test]
+    fn compiled_runtime_sidecar_contains_only_retained_state() {
+        let (device, _) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
+        let native = |label| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: 4,
+                usage: wgpu::BufferUsages::STORAGE,
+                mapped_at_creation: false,
+            })
+        };
+        let retained_native = native("retained");
+        let culled_native = native("culled");
+        let mut graph = FrameGraph::with_device(&device);
+        let mut frame = graph.begin_frame();
+        let retained = frame
+            .import_buffer(
+                BufferDesc::new("retained", 4),
+                ImportBufferOptions::new(InitialContents::Defined),
+            )
+            .unwrap();
+        let culled = frame
+            .import_buffer(
+                BufferDesc::new("culled", 4),
+                ImportBufferOptions::new(InitialContents::Defined),
+            )
+            .unwrap();
+        frame
+            .bind_imported_buffer(retained, &retained_native)
+            .unwrap();
+        frame.bind_imported_buffer(culled, &culled_native).unwrap();
+        let mut retained_pass = frame.command_pass("retained");
+        let _ = retained_pass
+            .storage_buffer_read(retained, BufferRange::whole())
+            .unwrap();
+        retained_pass.finish_command(|_| Ok(())).unwrap();
+        let mut culled_pass = frame.command_pass("culled");
+        culled_pass.set_side_effect(false);
+        let _ = culled_pass
+            .storage_buffer_read(culled, BufferRange::whole())
+            .unwrap();
+        culled_pass.finish_command(|_| Ok(())).unwrap();
+
+        let compiled = frame.compile(CompileOptions::full_report()).unwrap();
+        assert_eq!(compiled.resources.len(), 1);
+        assert_eq!(compiled.native_resources.len(), 1);
+        assert_eq!(compiled.executors.len(), 1);
+        let report = compiled.report().unwrap().full.as_ref().unwrap();
+        assert_eq!(report.resources.len(), 2);
+        assert_eq!(report.nodes.len(), 1);
+        assert_eq!(report.culled_nodes.len(), 1);
+    }
 }

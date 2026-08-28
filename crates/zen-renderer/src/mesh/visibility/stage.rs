@@ -4,7 +4,7 @@ use super::{
 };
 use crate::mesh::frame::MeshFrameResources;
 use crate::mesh::scene::MeshSceneResources;
-use zen_frame_graph::{BufferRange, Frame, FrameGraphError};
+use zen_frame_graph::{BufferRange, ClearBufferOp, Frame, FrameGraphError};
 
 pub(crate) struct VisibilityStage {
     pub list_a: VisibilityList,
@@ -49,14 +49,15 @@ impl VisibilityStage {
         frame: &mut Frame<'frame>,
         resources: &MeshFrameResources<'frame>,
     ) -> Result<(), FrameGraphError> {
-        for (label, buffer) in [
-            ("clear-list-a-visible-count", resources.list_a.visible_count),
-            ("clear-list-a-draw-count", resources.list_a.draw_count),
-            ("clear-list-b-visible-count", resources.list_b.visible_count),
-            ("clear-list-b-draw-count", resources.list_b.draw_count),
-        ] {
-            frame.clear_buffer(label, buffer, BufferRange::whole())?;
-        }
+        frame.clear_buffers(
+            "clear-visibility-counters",
+            [
+                ClearBufferOp::new(resources.list_a.visible_count, BufferRange::whole()),
+                ClearBufferOp::new(resources.list_a.draw_count, BufferRange::whole()),
+                ClearBufferOp::new(resources.list_b.visible_count, BufferRange::whole()),
+                ClearBufferOp::new(resources.list_b.draw_count, BufferRange::whole()),
+            ],
+        )?;
         Ok(())
     }
 }

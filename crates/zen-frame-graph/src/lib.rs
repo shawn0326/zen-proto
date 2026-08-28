@@ -38,15 +38,16 @@ pub use pass::{
 };
 pub use report::{
     AccessReport, AllocationReport, CompilationReport, CompilationSummary, CompilationTimings,
-    DebugGroupReport, DependencyReport, Diagnostic, DiagnosticSeverity, ExecutionSegmentKind,
-    ExecutionSegmentReport, FullCompilationReport, NodeReport, ResourceDescriptor,
-    ResourceLifetime, ResourceReport, ResourceUsage, RootReport, ValueKind, ValueReport,
-    ViewReport,
+    CulledNodeReason, CulledNodeReport, DebugGroupReport, DependencyReport, Diagnostic,
+    DiagnosticSeverity, ExecutionSegmentKind, ExecutionSegmentReport, FullCompilationReport,
+    NodeReport, ResourceDescriptor, ResourceLifetime, ResourceReport, ResourceUsage, RootReport,
+    ValueKind, ValueReport, ViewReport,
 };
 pub use resource::{
-    Buffer, BufferDesc, BufferRange, BufferTextureCopyLocation, ImportBufferOptions,
-    ImportTextureOptions, InitialContents, ResourceOrigin, Texture, TextureCopyLocation,
-    TextureDesc, TextureSubresourceRange, TextureTarget, TextureView, TextureViewDesc, UsagePolicy,
+    Buffer, BufferDesc, BufferRange, BufferTextureCopyLocation, ClearBufferOp, ImportBufferOptions,
+    ImportTextureOptions, InitialContents, NormalizedTextureViewDesc, ResourceOrigin, Texture,
+    TextureCopyLocation, TextureDesc, TextureSubresourceRange, TextureTarget, TextureView,
+    TextureViewDesc, UsagePolicy,
 };
 pub use resource_pool::ResourcePoolStats;
 pub use types::{

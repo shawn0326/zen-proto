@@ -1,10 +1,14 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
+};
 
 use zen_frame_graph::{
     BufferDesc, BufferRange, BufferTextureCopyLocation, ColorAttachmentOps, CompileOptions,
     DepthAttachmentOps, ExecutionOptions, FrameGraph, FrameGraphError, GpuTimingNodeKind,
     GpuTimingReport, GpuTimingUnavailableReason, ImportBufferOptions, ImportTextureOptions,
-    InitialContents, RootReason, TextureCopyLocation, TextureDesc, UsagePolicy, WriteContents,
+    InitialContents, RootReason, TextureCopyLocation, TextureDesc, TextureViewDesc, UsagePolicy,
+    WriteContents,
 };
 
 fn noop_device() -> (wgpu::Device, wgpu::Queue) {
@@ -34,6 +38,23 @@ fn native_buffer(device: &wgpu::Device, size: u64, usage: wgpu::BufferUsages) ->
         size,
         usage,
         mapped_at_creation: false,
+    })
+}
+
+fn native_texture(device: &wgpu::Device, usage: wgpu::TextureUsages) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("execution-view-cache-texture"),
+        size: wgpu::Extent3d {
+            width: 4,
+            height: 4,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage,
+        view_formats: &[],
     })
 }
 
@@ -260,6 +281,226 @@ fn culled_callback_is_not_invoked() {
         .execute(&queue)
         .unwrap();
     assert!(!*called.lock().unwrap());
+}
+
+#[test]
+fn culled_callback_capture_is_dropped_during_compile() {
+    struct DropProbe(Arc<AtomicUsize>);
+    impl Drop for DropProbe {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    let (device, _) = noop_device();
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let mut graph = FrameGraph::with_device(&device);
+    let mut frame = graph.begin_frame();
+    let mut culled = frame.command_pass("culled-drop-probe");
+    culled.set_side_effect(false);
+    let probe = DropProbe(dropped.clone());
+    culled
+        .finish_command(move |_| {
+            let _ = &probe;
+            Ok(())
+        })
+        .unwrap();
+
+    let compiled = frame.compile(CompileOptions::default()).unwrap();
+    assert_eq!(dropped.load(Ordering::SeqCst), 1);
+    drop(compiled);
+    assert_eq!(dropped.load(Ordering::SeqCst), 1);
+
+    let mut frame = graph.begin_frame();
+    let retained_probe = DropProbe(dropped.clone());
+    frame
+        .command_pass("retained-drop-probe")
+        .finish_command(move |_| {
+            let _ = &retained_probe;
+            Ok(())
+        })
+        .unwrap();
+    let compiled = frame.compile(CompileOptions::default()).unwrap();
+    assert_eq!(dropped.load(Ordering::SeqCst), 1);
+    drop(compiled);
+    assert_eq!(dropped.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn explicit_texture_view_is_reused_across_retained_roles() {
+    let (device, queue) = noop_device();
+    let usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING;
+    let native = native_texture(&device, usage);
+    let resolved = Arc::new(Mutex::new(Vec::<wgpu::TextureView>::new()));
+    let mut graph = FrameGraph::with_device(&device);
+    let mut frame = graph.begin_frame();
+    let texture = frame
+        .import_texture(
+            TextureDesc {
+                usage: UsagePolicy::Fixed(usage),
+                ..TextureDesc::new_2d("shared", 4, 4, wgpu::TextureFormat::Rgba8Unorm)
+            },
+            ImportTextureOptions {
+                initial_contents: InitialContents::Defined,
+                exposed_usage: Some(usage),
+            },
+        )
+        .unwrap();
+    frame.bind_imported_texture(texture, &native).unwrap();
+    let view = frame
+        .create_texture_view(texture, TextureViewDesc::default())
+        .unwrap();
+
+    let sampled_views = resolved.clone();
+    let mut sampled = frame.command_pass("sampled");
+    let sampled_token = sampled.sampled_texture(view).unwrap();
+    sampled
+        .finish_command(move |ctx| {
+            sampled_views
+                .lock()
+                .unwrap()
+                .push(ctx.resources.texture_view(sampled_token)?.clone());
+            Ok(())
+        })
+        .unwrap();
+    let storage_views = resolved.clone();
+    let mut storage = frame.command_pass("storage");
+    let storage_token = storage.storage_texture_read(view).unwrap();
+    storage
+        .finish_command(move |ctx| {
+            storage_views
+                .lock()
+                .unwrap()
+                .push(ctx.resources.texture_view(storage_token)?.clone());
+            Ok(())
+        })
+        .unwrap();
+
+    frame
+        .compile(CompileOptions::default())
+        .unwrap()
+        .execute(&queue)
+        .unwrap();
+    let resolved = resolved.lock().unwrap();
+    assert_eq!(resolved.len(), 2);
+    assert_eq!(resolved[0], resolved[1]);
+}
+
+#[test]
+fn implicit_view_cache_reuses_compatible_roles_and_separates_incompatible_roles() {
+    let (device, queue) = noop_device();
+    let usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING;
+    let native = native_texture(&device, usage);
+    let resolved = Arc::new(Mutex::new(Vec::<wgpu::TextureView>::new()));
+    let mut graph = FrameGraph::with_device(&device);
+    let mut frame = graph.begin_frame();
+    let texture = frame
+        .import_texture(
+            TextureDesc {
+                usage: UsagePolicy::Fixed(usage),
+                ..TextureDesc::new_2d("raw", 4, 4, wgpu::TextureFormat::Rgba8Unorm)
+            },
+            ImportTextureOptions {
+                initial_contents: InitialContents::Defined,
+                exposed_usage: Some(usage),
+            },
+        )
+        .unwrap();
+    frame.bind_imported_texture(texture, &native).unwrap();
+
+    let write_views = resolved.clone();
+    let mut write = frame.command_pass("storage-write");
+    let write_token = write
+        .storage_texture_write(texture, WriteContents::Overwrite)
+        .unwrap();
+    write
+        .finish_command(move |ctx| {
+            write_views
+                .lock()
+                .unwrap()
+                .push(ctx.resources.texture_view(write_token)?.clone());
+            Ok(())
+        })
+        .unwrap();
+    let read_views = resolved.clone();
+    let mut read = frame.command_pass("storage-read");
+    let read_token = read.storage_texture_read(texture).unwrap();
+    read.finish_command(move |ctx| {
+        read_views
+            .lock()
+            .unwrap()
+            .push(ctx.resources.texture_view(read_token)?.clone());
+        Ok(())
+    })
+    .unwrap();
+    let sampled_views = resolved.clone();
+    let mut sampled = frame.command_pass("sampled-read");
+    let sampled_token = sampled.sampled_texture(texture).unwrap();
+    sampled
+        .finish_command(move |ctx| {
+            sampled_views
+                .lock()
+                .unwrap()
+                .push(ctx.resources.texture_view(sampled_token)?.clone());
+            Ok(())
+        })
+        .unwrap();
+
+    frame
+        .compile(CompileOptions::default())
+        .unwrap()
+        .execute(&queue)
+        .unwrap();
+    let resolved = resolved.lock().unwrap();
+    assert_eq!(resolved.len(), 3);
+    assert_eq!(resolved[0], resolved[1]);
+    assert_ne!(resolved[1], resolved[2]);
+}
+
+#[test]
+fn distinct_explicit_view_handles_remain_distinct() {
+    let (device, queue) = noop_device();
+    let usage = wgpu::TextureUsages::TEXTURE_BINDING;
+    let native = native_texture(&device, usage);
+    let mut graph = FrameGraph::with_device(&device);
+    let mut frame = graph.begin_frame();
+    let texture = frame
+        .import_texture(
+            TextureDesc {
+                usage: UsagePolicy::Fixed(usage),
+                ..TextureDesc::new_2d("explicit", 4, 4, wgpu::TextureFormat::Rgba8Unorm)
+            },
+            ImportTextureOptions {
+                initial_contents: InitialContents::Defined,
+                exposed_usage: Some(usage),
+            },
+        )
+        .unwrap();
+    frame.bind_imported_texture(texture, &native).unwrap();
+    let first = frame
+        .create_texture_view(texture, TextureViewDesc::default())
+        .unwrap();
+    let second = frame
+        .create_texture_view(texture, TextureViewDesc::default())
+        .unwrap();
+    let distinct = Arc::new(Mutex::new(false));
+    let result = distinct.clone();
+    let mut pass = frame.command_pass("two-logical-views");
+    let first_token = pass.sampled_texture(first).unwrap();
+    let second_token = pass.sampled_texture(second).unwrap();
+    pass.finish_command(move |ctx| {
+        *result.lock().unwrap() =
+            ctx.resources.texture_view(first_token)? != ctx.resources.texture_view(second_token)?;
+        Ok(())
+    })
+    .unwrap();
+
+    frame
+        .compile(CompileOptions::default())
+        .unwrap()
+        .execute(&queue)
+        .unwrap();
+    assert!(*distinct.lock().unwrap());
 }
 
 #[test]

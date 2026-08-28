@@ -323,9 +323,7 @@ mod tests {
                 .map(|node| node.label.as_str())
                 .collect::<Vec<_>>(),
             [
-                "clear-list-a-visible-count",
-                "clear-list-a-draw-count",
-                "clear-list-b-visible-count",
+                "clear-visibility-counters",
                 "main-cull",
                 "dispatch-prepare-a",
                 "draw-prepare-a",
@@ -339,8 +337,6 @@ mod tests {
                 .map(|node| node.kind)
                 .collect::<Vec<_>>(),
             [
-                NodeKind::ClearBuffer,
-                NodeKind::ClearBuffer,
                 NodeKind::ClearBuffer,
                 NodeKind::Compute,
                 NodeKind::Compute,
@@ -410,7 +406,7 @@ mod tests {
     #[test]
     fn full_topology_preserves_hiz_attachment_and_root_dependencies() {
         let report = record_topology(true, true, true);
-        assert_eq!(report.nodes.len(), 24);
+        assert_eq!(report.nodes.len(), 21);
         assert_eq!(report.nodes.last().unwrap().kind, NodeKind::Copy);
         assert!(
             report
@@ -467,6 +463,17 @@ mod tests {
                 .unwrap()
                 .id
         };
+        let clear = node_id("clear-visibility-counters");
+        assert_eq!(
+            report
+                .accesses
+                .iter()
+                .filter(|access| {
+                    access.pass == clear && access.role == AccessRole::BufferCopyDst
+                })
+                .count(),
+            4
+        );
         for (draw_label, hiz_label) in [
             ("draw-a", "hiz-initial-depth-to-mip0"),
             ("draw-b", "hiz-final-depth-to-mip0"),

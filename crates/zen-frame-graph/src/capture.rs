@@ -18,8 +18,13 @@ impl TryFrom<&CompilationReport> for FrameGraphCaptureV1 {
             .clone()
             .ok_or(FrameGraphError::CaptureRequiresFullReport)?;
         graph.debug_groups.clear();
-        for node in graph.nodes.iter_mut().chain(&mut graph.culled_nodes) {
+        for node in &mut graph.nodes {
             node.debug_group = None;
+            node.recording_order = 0;
+        }
+        for node in &mut graph.culled_nodes {
+            node.debug_group = None;
+            node.recording_order = 0;
         }
         for resource in &mut graph.resources {
             resource.debug_group = None;

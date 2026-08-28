@@ -59,11 +59,36 @@ pub enum ResourceDescriptor {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct NodeReport {
     pub id: PassId,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub recording_order: u32,
     pub kind: NodeKind,
     pub label: String,
     pub side_effect: bool,
     #[cfg_attr(feature = "serde", serde(skip))]
     pub debug_group: Option<DebugGroupId>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum CulledNodeReason {
+    #[default]
+    NotReachableFromRoot,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct CulledNodeReport {
+    pub id: PassId,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub recording_order: u32,
+    pub kind: NodeKind,
+    pub label: String,
+    pub side_effect: bool,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub debug_group: Option<DebugGroupId>,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reason: CulledNodeReason,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -206,7 +231,7 @@ pub struct Diagnostic {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct FullCompilationReport {
     pub nodes: Vec<NodeReport>,
-    pub culled_nodes: Vec<NodeReport>,
+    pub culled_nodes: Vec<CulledNodeReport>,
     pub resources: Vec<ResourceReport>,
     pub views: Vec<ViewReport>,
     pub accesses: Vec<AccessReport>,

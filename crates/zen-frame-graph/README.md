@@ -22,6 +22,11 @@ FrameGraph -> Frame<'frame> -> CompiledFrame<'frame> -> execute(queue)
 
 `Frame::compile` consumes the recording. Logical handles are bound to the
 exclusive frame borrow and also carry runtime owner and recording identities.
+Recording-time `texture_desc`, `buffer_desc`, and `texture_view_desc` queries
+return snapshotted metadata; the view query resolves all descriptor defaults.
+After compilation, callbacks and native bindings referenced only by culled work
+are released immediately, while a Full report still describes the complete
+recording.
 
 ## GPU execution
 
@@ -61,9 +66,15 @@ frame.compile(CompileOptions::default())?.execute(queue)?;
 
 `finish_render` and `finish_compute` expose only an active wgpu pass plus typed
 resource resolution. Copy nodes own validated buffer-buffer, buffer-texture,
-texture-buffer, or texture-texture operations; `clear_buffer` owns an aligned,
-non-empty clear range. `command_pass` remains an escape hatch, while external
-submission nodes split FrameGraph-owned command encoders into ordered segments.
+texture-buffer, or texture-texture operations. `clear_buffer` records one
+aligned, non-empty range, while `clear_buffers` records several ordered clears
+in one node. `command_pass` remains an escape hatch, while external submission
+nodes split FrameGraph-owned command encoders into ordered segments.
+
+Retained texture accesses are compiled into a per-execution materialization
+plan. Repeated accesses to one logical `TextureView` share a single native
+`wgpu::TextureView`; compatible implicit storage views are shared as well. The
+cache is scoped to one execution and never enters the cross-frame resource pool.
 
 Render nodes support multisample color resolve targets and read-only depth
 attachments. Attachment declarations, sampled/storage roles, copy roles, sample
@@ -188,7 +199,8 @@ compiler does not reorder or merge passes.
 
 `ReportLevel::Summary` records counts and compile timings. `ReportLevel::Full`
 also records resources, views, accesses, values, dependencies, roots, lifetimes,
-allocation plans, execution segments, and recording debug-group hierarchy.
+allocation plans, execution segments, original recording order, explicit
+culling reasons, and recording debug-group hierarchy.
 `Frame::push_debug_group`, `pop_debug_group`, and `with_debug_group` assign nodes
 and resources to stable per-recording groups. `ExecutionOptions` can optionally
 emit those retained group paths as GPU debug markers; marker emission is off by
@@ -196,8 +208,8 @@ default and is reset across external-submission segment boundaries.
 
 The optional `serde` feature exposes `FrameGraphCaptureV1`, whose schema is in
 `schema/frame-graph-capture-v1.schema.json`.
-CaptureV1 intentionally strips debug-group metadata so its existing JSON schema
-and fixtures remain stable.
+CaptureV1 intentionally strips debug-group, recording-order, and culling-reason
+metadata so its existing JSON schema and fixtures remain stable.
 
 Errors are structured `FrameGraphError` values with stable `FGxxxx` diagnostic
 codes and graph context.

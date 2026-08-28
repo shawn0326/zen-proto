@@ -5,13 +5,15 @@ use core::{
 use std::collections::HashMap;
 
 use crate::{
-    Buffer, BufferDesc, BufferRange, CompileOptions, CompiledFrame, DebugGroupId, FrameGraphError,
-    ImportBufferOptions, ImportTextureOptions, InitialContents, NodeKind, PassBuilder, PassId,
-    ResourceDescriptor, ResourceId, ResourceOrigin, RootReason, Texture, TextureDesc,
-    TextureSubresourceRange, TextureTarget, TextureView, TextureViewDesc, ViewId, compiler,
+    Buffer, BufferDesc, BufferRange, ClearBufferOp, CompileOptions, CompiledFrame, DebugGroupId,
+    FrameGraphError, ImportBufferOptions, ImportTextureOptions, InitialContents, NodeKind,
+    NormalizedTextureViewDesc, PassBuilder, PassId, ResourceDescriptor, ResourceId, ResourceOrigin,
+    RootReason, Texture, TextureDesc, TextureSubresourceRange, TextureTarget, TextureView,
+    TextureViewDesc, ViewId, compiler,
     execution::{ClearBufferOperation, NativeResource, NodeExecutor},
     gpu_timing::GpuProfiler,
     model::{DebugGroupRecord, NormalizedRange, ResourceRecord, RootRecord, ViewRecord},
+    resource::normalize_texture_view_descriptor,
     resource_pool::{ResourcePool, ResourcePoolStats},
 };
 
@@ -359,6 +361,42 @@ impl<'frame> Frame<'frame> {
         })
     }
 
+    /// Returns the descriptor snapshotted for a logical texture.
+    pub fn texture_desc(&self, texture: Texture<'frame>) -> Result<&TextureDesc, FrameGraphError> {
+        self.validate_handle(texture.owner, texture.recording)?;
+        self.resource(texture.id)?
+            .texture()
+            .ok_or_else(|| FrameGraphError::Internal {
+                message: "texture handle resolved to a buffer".into(),
+            })
+    }
+
+    /// Returns the descriptor snapshotted for a logical buffer.
+    pub fn buffer_desc(&self, buffer: Buffer<'frame>) -> Result<&BufferDesc, FrameGraphError> {
+        self.validate_handle(buffer.owner, buffer.recording)?;
+        self.resource(buffer.id)?
+            .buffer()
+            .ok_or_else(|| FrameGraphError::Internal {
+                message: "buffer handle resolved to a texture".into(),
+            })
+    }
+
+    /// Returns fully resolved metadata for a logical texture view.
+    pub fn texture_view_desc(
+        &self,
+        view: TextureView<'frame>,
+    ) -> Result<NormalizedTextureViewDesc, FrameGraphError> {
+        self.validate_handle(view.owner, view.recording)?;
+        let view = self.view(view.id)?;
+        let texture =
+            self.resource(view.texture)?
+                .texture()
+                .ok_or_else(|| FrameGraphError::Internal {
+                    message: "texture view resolved to a buffer".into(),
+                })?;
+        Ok(normalize_texture_view_descriptor(texture, &view.descriptor))
+    }
+
     pub fn render_pass(&mut self, label: impl Into<String>) -> PassBuilder<'_, 'frame> {
         self.pass(NodeKind::Render, label, false)
     }
@@ -452,37 +490,64 @@ impl<'frame> Frame<'frame> {
         buffer: Buffer<'frame>,
         range: BufferRange,
     ) -> Result<PassId, FrameGraphError> {
-        self.validate_handle(buffer.owner, buffer.recording)?;
-        let descriptor =
-            self.resource(buffer.id)?
+        self.clear_buffers(label, [ClearBufferOp::new(buffer, range)])
+    }
+
+    /// Records one node containing ordered zero-fill operations.
+    pub fn clear_buffers(
+        &mut self,
+        label: impl Into<String>,
+        operations: impl IntoIterator<Item = ClearBufferOp<'frame>>,
+    ) -> Result<PassId, FrameGraphError> {
+        let id = PassId::new(u32::try_from(self.nodes.len()).unwrap_or(u32::MAX));
+        let operations = operations.into_iter().collect::<Vec<_>>();
+        if operations.is_empty() {
+            return Err(FrameGraphError::InvalidNodeOperation {
+                pass: id,
+                resource: None,
+                message: "clear-buffer nodes require at least one operation".into(),
+            });
+        }
+        let mut resolved_operations = Vec::with_capacity(operations.len());
+        for operation in &operations {
+            self.validate_handle(operation.target.owner, operation.target.recording)?;
+            let descriptor = self
+                .resource(operation.target.id)?
                 .buffer()
                 .ok_or_else(|| FrameGraphError::Internal {
                     message: "clear buffer handle resolved to a texture".into(),
                 })?;
-        let resolved = range.resolve(buffer.id, descriptor.size)?;
-        let size = resolved.end - resolved.start;
-        let id = PassId::new(u32::try_from(self.nodes.len()).unwrap_or(u32::MAX));
-        if size == 0
-            || !resolved.start.is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT)
-            || !size.is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT)
-        {
-            return Err(FrameGraphError::InvalidNodeOperation {
-                pass: id,
-                resource: Some(buffer.id),
-                message: "clear range must be non-empty and 4-byte aligned".into(),
+            let resolved = operation
+                .range
+                .resolve(operation.target.id, descriptor.size)?;
+            let size = resolved.end - resolved.start;
+            if size == 0
+                || !resolved.start.is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT)
+                || !size.is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT)
+            {
+                return Err(FrameGraphError::InvalidNodeOperation {
+                    pass: id,
+                    resource: Some(operation.target.id),
+                    message: "clear range must be non-empty and 4-byte aligned".into(),
+                });
+            }
+            resolved_operations.push(ClearBufferOperation {
+                buffer: operation.target.id,
+                offset: resolved.start,
+                size,
             });
         }
         let mut pass = self.pass(NodeKind::ClearBuffer, label, false);
-        let _ = pass.buffer_copy_dst(buffer, range, crate::WriteContents::Overwrite)?;
+        for operation in operations {
+            let _ = pass.buffer_copy_dst(
+                operation.target,
+                operation.range,
+                crate::WriteContents::Overwrite,
+            )?;
+        }
         let id = pass.finish()?;
-        self.executors.insert(
-            id,
-            NodeExecutor::ClearBuffer(ClearBufferOperation {
-                buffer: buffer.id,
-                offset: resolved.start,
-                size,
-            }),
-        );
+        self.executors
+            .insert(id, NodeExecutor::ClearBuffer(resolved_operations));
         Ok(id)
     }
 
@@ -554,6 +619,15 @@ impl<'frame> Frame<'frame> {
             .filter(|resource| resource.id == id)
             .ok_or_else(|| FrameGraphError::Internal {
                 message: format!("unknown resource id {id}"),
+            })
+    }
+
+    pub(crate) fn view(&self, id: ViewId) -> Result<&ViewRecord, FrameGraphError> {
+        self.views
+            .get(id.get() as usize)
+            .filter(|view| view.id == id)
+            .ok_or_else(|| FrameGraphError::Internal {
+                message: format!("unknown texture view id {id}"),
             })
     }
 
