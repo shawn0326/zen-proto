@@ -195,7 +195,7 @@ assert_eq!(compiled.report().unwrap().summary.retained_node_count, 1);
 Retained passes always remain a stable subsequence of recording order. The
 compiler does not reorder or merge passes.
 
-## Diagnostics and capture
+## Diagnostics and Snapshot
 
 `ReportLevel::Summary` records counts and compile timings. `ReportLevel::Full`
 also records resources, views, accesses, values, dependencies, roots, lifetimes,
@@ -206,10 +206,21 @@ and resources to stable per-recording groups. `ExecutionOptions` can optionally
 emit those retained group paths as GPU debug markers; marker emission is off by
 default and is reset across external-submission segment boundaries.
 
-The optional `serde` feature exposes `FrameGraphCaptureV1`, whose schema is in
-`schema/frame-graph-capture-v1.schema.json`.
-CaptureV1 intentionally strips debug-group, recording-order, and culling-reason
-metadata so its existing JSON schema and fixtures remain stable.
+The optional `serde` feature remains the internal report serialization switch.
+The separate `snapshot` feature exposes the t3d-next FrameGraph Snapshot 1.0
+wire types, `create_frame_graph_snapshot`, and compact/pretty JSON encoding.
+The adapter requires a Full report and preserves groups, original recording
+order, retained/culled state, normalized texture views, split texture regions,
+dependencies, roots, execution segments, allocation facts, optional pool facts,
+GPU timings, and diagnostics. `CompiledFrame::take_report()` moves that report
+into an asynchronous capture path without cloning it.
+
+Snapshot export creates an in-memory object or JSON text only. It deliberately
+does not access the filesystem, choose names, create directories, overwrite
+files, validate arbitrary JSON, migrate older formats, or emit private
+extensions. Snapshot 1.0 behavior is aligned to t3d-next commit
+`287ff8c26e018d0905fddf1389181424934d8a3c`; that implementation remains the
+protocol and validator source of truth.
 
 Errors are structured `FrameGraphError` values with stable `FGxxxx` diagnostic
 codes and graph context.

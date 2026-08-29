@@ -6,6 +6,10 @@ publish = false
 description = "GPU-driven renderer with explicit frame composition and Mesh-domain stages"
 readme = "README.md"
 
+[features]
+default = []
+snapshot = ["zen-frame-graph/snapshot"]
+
 [dependencies]
 zen-frame-graph = { path = "../zen-frame-graph" }
 wgpu.workspace = true

@@ -31,6 +31,8 @@ struct Demo {
 }
 
 impl Example for Demo {
+    const NAME: &'static str = "basic";
+
     async fn init(window: Arc<Window>) -> Self {
         let instance = wgpu::Instance::default();
         let size = window.inner_size();
@@ -237,6 +239,10 @@ impl Example for Demo {
                 self.enable_occlusion_culling
             );
         }
+    }
+
+    fn frame_graph_snapshot_source(&mut self) -> Option<&mut Renderer> {
+        Some(&mut self.renderer)
     }
 }
 

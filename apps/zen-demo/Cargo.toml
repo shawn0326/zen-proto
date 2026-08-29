@@ -5,7 +5,7 @@ edition.workspace = true
 publish = false
 
 [dependencies]
-zen-renderer = { path = "../../crates/zen-renderer" }
+zen-renderer = { path = "../../crates/zen-renderer", features = ["snapshot"] }
 wgpu.workspace = true
 glam = { workspace = true, features = ["rand"] }
 winit.workspace = true
@@ -13,3 +13,7 @@ pollster.workspace = true
 rand.workspace = true
 image.workspace = true
 gltf.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

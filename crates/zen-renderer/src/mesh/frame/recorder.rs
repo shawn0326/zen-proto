@@ -45,40 +45,38 @@ impl MeshFrameRecorder {
         )?;
 
         let max_instance_count = scene.instances().instance_count();
-        frame.with_debug_group("Main View", |frame| {
-            visibility.record_counter_clears(frame, &resources)?;
-            visibility
-                .main_cull
-                .record(frame, &resources, max_instance_count)?;
-            visibility.dispatch_prepare.record(
-                frame,
-                "dispatch-prepare-a",
-                resources.list_a,
-                &visibility.list_a,
-            )?;
-            draw.prepare.record(
-                frame,
-                "draw-prepare-a",
-                &resources,
-                resources.list_a,
-                &visibility.list_a,
-            )?;
-            draw.draw.record(
-                frame,
-                "draw-a",
-                targets,
-                &resources,
-                resources.list_a,
-                &visibility.list_a,
-                scene,
-                max_instance_count,
-                0,
-                true,
-            )
-        })?;
+        visibility.record_counter_clears(frame, &resources)?;
+        visibility
+            .main_cull
+            .record(frame, &resources, max_instance_count)?;
+        visibility.dispatch_prepare.record(
+            frame,
+            "dispatch-prepare-a",
+            resources.list_a,
+            &visibility.list_a,
+        )?;
+        draw.prepare.record(
+            frame,
+            "draw-prepare-a",
+            &resources,
+            resources.list_a,
+            &visibility.list_a,
+        )?;
+        draw.draw.record(
+            frame,
+            "draw-a",
+            targets,
+            &resources,
+            resources.list_a,
+            &visibility.list_a,
+            scene,
+            max_instance_count,
+            0,
+            true,
+        )?;
 
         if prepared.enable_occlusion_culling {
-            frame.with_debug_group("Occlusion Refinement", |frame| {
+            frame.with_debug_group("Initial Hi-Z Pyramid", |frame| {
                 visibility.hiz_generator.record_depth_to_mip0(
                     frame,
                     "hiz-initial-depth-to-mip0",
@@ -95,43 +93,44 @@ impl MeshFrameRecorder {
                         mip,
                     )?;
                 }
-                visibility.dispatch_prepare.record(
-                    frame,
-                    "dispatch-prepare-b",
-                    resources.list_b,
-                    &visibility.list_b,
-                )?;
-                visibility.occlusion_cull.record(
-                    frame,
-                    "occlusion-cull-b",
-                    &resources,
-                    resources.list_b,
-                    &visibility.list_b,
-                    scene,
-                    &visibility.history,
-                )?;
-                draw.prepare.record(
-                    frame,
-                    "draw-prepare-b",
-                    &resources,
-                    resources.list_b,
-                    &visibility.list_b,
-                )?;
-                draw.draw.record(
-                    frame,
-                    "draw-b",
-                    targets,
-                    &resources,
-                    resources.list_b,
-                    &visibility.list_b,
-                    scene,
-                    max_instance_count,
-                    0,
-                    false,
-                )
+                Ok(())
             })?;
+            visibility.dispatch_prepare.record(
+                frame,
+                "dispatch-prepare-b",
+                resources.list_b,
+                &visibility.list_b,
+            )?;
+            visibility.occlusion_cull.record(
+                frame,
+                "occlusion-cull-b",
+                &resources,
+                resources.list_b,
+                &visibility.list_b,
+                scene,
+                &visibility.history,
+            )?;
+            draw.prepare.record(
+                frame,
+                "draw-prepare-b",
+                &resources,
+                resources.list_b,
+                &visibility.list_b,
+            )?;
+            draw.draw.record(
+                frame,
+                "draw-b",
+                targets,
+                &resources,
+                resources.list_b,
+                &visibility.list_b,
+                scene,
+                max_instance_count,
+                0,
+                false,
+            )?;
 
-            frame.with_debug_group("Visibility History", |frame| {
+            frame.with_debug_group("Final Hi-Z Pyramid", |frame| {
                 visibility.hiz_generator.record_depth_to_mip0(
                     frame,
                     "hiz-final-depth-to-mip0",
@@ -148,16 +147,17 @@ impl MeshFrameRecorder {
                         mip,
                     )?;
                 }
-                visibility.occlusion_cull.record(
-                    frame,
-                    "occlusion-cull-a-history",
-                    &resources,
-                    resources.list_a,
-                    &visibility.list_a,
-                    scene,
-                    &visibility.history,
-                )
+                Ok(())
             })?;
+            visibility.occlusion_cull.record(
+                frame,
+                "occlusion-cull-a-history",
+                &resources,
+                resources.list_a,
+                &visibility.list_a,
+                scene,
+                &visibility.history,
+            )?;
         }
 
         if prepared.debug_camera {
@@ -286,24 +286,21 @@ mod tests {
                 FrameTargets::register(frame, &surface)
             })
             .unwrap();
-        frame
-            .with_debug_group("Mesh", |frame| {
-                MeshFrameRecorder::record(
-                    frame,
-                    targets,
-                    PreparedMeshFrame {
-                        enable_occlusion_culling: occlusion,
-                        debug_camera: debug,
-                        readback_index: stats.planned_buffer_index(),
-                        extent: surface.size(),
-                    },
-                    &scene,
-                    &visibility,
-                    &draw,
-                    &stats,
-                )
-            })
-            .unwrap();
+        MeshFrameRecorder::record(
+            &mut frame,
+            targets,
+            PreparedMeshFrame {
+                enable_occlusion_culling: occlusion,
+                debug_camera: debug,
+                readback_index: stats.planned_buffer_index(),
+                extent: surface.size(),
+            },
+            &scene,
+            &visibility,
+            &draw,
+            &stats,
+        )
+        .unwrap();
         frame.mark_present(targets.color).unwrap();
         let compiled = frame
             .compile(CompileOptions {
@@ -357,7 +354,7 @@ mod tests {
                 .iter()
                 .map(|group| group.label.as_str())
                 .collect::<Vec<_>>(),
-            ["Frame Targets", "Mesh", "Main View"]
+            ["Frame Targets"]
         );
         let group = |label: &str| {
             report
@@ -366,13 +363,7 @@ mod tests {
                 .find(|group| group.label == label)
                 .unwrap()
         };
-        assert_eq!(group("Main View").parent, Some(group("Mesh").id));
-        assert!(
-            report
-                .nodes
-                .iter()
-                .all(|node| { node.debug_group == Some(group("Main View").id) })
-        );
+        assert!(report.nodes.iter().all(|node| node.debug_group.is_none()));
 
         let resource = |label: &str| {
             report
@@ -397,16 +388,50 @@ mod tests {
             resource("surface-color").debug_group,
             Some(group("Frame Targets").id)
         );
-        assert_eq!(
-            resource("hiz-transient").debug_group,
-            Some(group("Mesh").id)
-        );
+        assert_eq!(resource("hiz-transient").debug_group, None);
     }
 
     #[test]
     fn full_topology_preserves_hiz_attachment_and_root_dependencies() {
         let report = record_topology(true, true, true);
         assert_eq!(report.nodes.len(), 21);
+        assert_eq!(
+            report
+                .nodes
+                .iter()
+                .map(|node| node.label.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "clear-visibility-counters",
+                "main-cull",
+                "dispatch-prepare-a",
+                "draw-prepare-a",
+                "draw-a",
+                "hiz-initial-depth-to-mip0",
+                "hiz-initial-mip0-to-mip1",
+                "hiz-initial-mip1-to-mip2",
+                "hiz-initial-mip2-to-mip3",
+                "dispatch-prepare-b",
+                "occlusion-cull-b",
+                "draw-prepare-b",
+                "draw-b",
+                "hiz-final-depth-to-mip0",
+                "hiz-final-mip0-to-mip1",
+                "hiz-final-mip1-to-mip2",
+                "hiz-final-mip2-to-mip3",
+                "occlusion-cull-a-history",
+                "debug-draw-a",
+                "debug-draw-b",
+                "stats-readback",
+            ]
+        );
+        assert!(
+            report
+                .nodes
+                .iter()
+                .enumerate()
+                .all(|(index, node)| node.recording_order == index as u32)
+        );
         assert_eq!(report.nodes.last().unwrap().kind, NodeKind::Copy);
         assert!(
             report
@@ -423,13 +448,80 @@ mod tests {
                 .collect::<Vec<_>>(),
             [
                 "Frame Targets",
-                "Mesh",
-                "Main View",
-                "Occlusion Refinement",
-                "Visibility History",
+                "Initial Hi-Z Pyramid",
+                "Final Hi-Z Pyramid",
                 "Debug View",
                 "Stats Readback",
             ]
+        );
+        let group = |label: &str| {
+            report
+                .debug_groups
+                .iter()
+                .find(|group| group.label == label)
+                .unwrap()
+        };
+        assert!(
+            report
+                .debug_groups
+                .iter()
+                .all(|group| group.parent.is_none())
+        );
+        for (prefix, group_label) in [
+            ("hiz-initial-", "Initial Hi-Z Pyramid"),
+            ("hiz-final-", "Final Hi-Z Pyramid"),
+        ] {
+            let group_id = group(group_label).id;
+            let nodes = report
+                .nodes
+                .iter()
+                .filter(|node| node.label.starts_with(prefix))
+                .collect::<Vec<_>>();
+            assert_eq!(nodes.len(), 4);
+            assert!(nodes.iter().all(|node| node.debug_group == Some(group_id)));
+        }
+        for label in [
+            "clear-visibility-counters",
+            "main-cull",
+            "dispatch-prepare-a",
+            "draw-prepare-a",
+            "draw-a",
+            "dispatch-prepare-b",
+            "occlusion-cull-b",
+            "draw-prepare-b",
+            "draw-b",
+            "occlusion-cull-a-history",
+        ] {
+            assert_eq!(
+                report
+                    .nodes
+                    .iter()
+                    .find(|node| node.label == label)
+                    .unwrap()
+                    .debug_group,
+                None,
+                "{label} should remain in the continuous top-level flow"
+            );
+        }
+        for label in ["debug-draw-a", "debug-draw-b"] {
+            assert_eq!(
+                report
+                    .nodes
+                    .iter()
+                    .find(|node| node.label == label)
+                    .unwrap()
+                    .debug_group,
+                Some(group("Debug View").id)
+            );
+        }
+        assert_eq!(
+            report
+                .nodes
+                .iter()
+                .find(|node| node.label == "stats-readback")
+                .unwrap()
+                .debug_group,
+            Some(group("Stats Readback").id)
         );
 
         let resource = |label: &str| {
@@ -441,6 +533,7 @@ mod tests {
         };
         let depth = resource("depth-transient");
         let hiz = resource("hiz-transient");
+        assert_eq!(hiz.debug_group, None);
         assert_eq!(
             depth.effective_usage,
             ResourceUsage::Texture(
@@ -563,12 +656,31 @@ mod tests {
                     let has_group =
                         |label: &str| report.debug_groups.iter().any(|group| group.label == label);
                     assert!(has_group("Frame Targets"));
-                    assert!(has_group("Mesh"));
-                    assert!(has_group("Main View"));
-                    assert_eq!(has_group("Occlusion Refinement"), occlusion);
-                    assert_eq!(has_group("Visibility History"), occlusion);
+                    assert!(!has_group("Mesh"));
+                    assert!(!has_group("Main View"));
+                    assert!(!has_group("Occlusion Refinement"));
+                    assert!(!has_group("Visibility History"));
+                    assert_eq!(has_group("Initial Hi-Z Pyramid"), occlusion);
+                    assert_eq!(has_group("Final Hi-Z Pyramid"), occlusion);
                     assert_eq!(has_group("Debug View"), debug);
                     assert_eq!(has_group("Stats Readback"), stats);
+                    assert!(
+                        report
+                            .debug_groups
+                            .iter()
+                            .all(|group| group.parent.is_none())
+                    );
+                    assert!(
+                        report
+                            .nodes
+                            .iter()
+                            .filter(|node| {
+                                !node.label.starts_with("hiz-")
+                                    && !node.label.starts_with("debug-draw-")
+                                    && node.label != "stats-readback"
+                            })
+                            .all(|node| node.debug_group.is_none())
+                    );
 
                     let roots = report
                         .roots

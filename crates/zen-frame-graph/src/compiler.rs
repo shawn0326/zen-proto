@@ -131,6 +131,11 @@ impl<'frame> CompiledFrame<'frame> {
         self.report.as_ref()
     }
 
+    /// Takes the optional compilation report without cloning it.
+    pub fn take_report(&mut self) -> Option<CompilationReport> {
+        self.report.take()
+    }
+
     pub fn retained_node_count(&self) -> usize {
         self.plan.retained_nodes.len()
     }
@@ -1386,6 +1391,7 @@ fn build_full_report(
                 id: access.id,
                 pass: access.pass,
                 resource: access.resource,
+                view: access.view,
                 role: access.role,
                 mode: access.mode,
                 consumes_previous: access.consumes_previous,

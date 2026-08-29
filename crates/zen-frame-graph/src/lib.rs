@@ -13,11 +13,8 @@ mod resource;
 mod resource_pool;
 mod types;
 
-#[cfg(feature = "serde")]
-mod capture;
-
-#[cfg(feature = "serde")]
-pub use capture::FrameGraphCaptureV1;
+#[cfg(feature = "snapshot")]
+pub mod snapshot;
 pub use compiler::CompiledFrame;
 pub use error::FrameGraphError;
 pub use execution::{

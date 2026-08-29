@@ -108,9 +108,6 @@ pub enum FrameGraphError {
         available: u64,
     },
 
-    #[error("a full compilation report is required to create a capture")]
-    CaptureRequiresFullReport,
-
     #[error("GPU execution requires FrameGraph::with_device()")]
     MissingGpuDevice,
 
@@ -182,7 +179,6 @@ impl FrameGraphError {
             Self::InvalidDebugGroupLabel { .. } => "FG2003",
             Self::DebugGroupStackUnderflow => "FG2004",
             Self::UnclosedDebugGroup { .. } => "FG2005",
-            Self::CaptureRequiresFullReport => "FG3001",
             Self::MissingGpuDevice => "FG4001",
             Self::MissingNativeBinding { .. } => "FG4002",
             Self::NativeDescriptorMismatch { .. } => "FG4003",

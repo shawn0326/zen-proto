@@ -3436,6 +3436,8 @@ dependencies = [
  "image",
  "pollster",
  "rand",
+ "tempfile",
+ "thiserror 2.0.17",
  "wgpu",
  "winit",
  "zen-renderer",

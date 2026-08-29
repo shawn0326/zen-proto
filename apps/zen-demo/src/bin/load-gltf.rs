@@ -28,6 +28,8 @@ struct Demo {
 }
 
 impl Example for Demo {
+    const NAME: &'static str = "load-gltf";
+
     async fn init(window: Arc<Window>) -> Self {
         let instance = wgpu::Instance::default();
         let size = window.inner_size();
@@ -165,6 +167,10 @@ impl Example for Demo {
     fn mouse_wheel(&mut self, delta_y: f32) {
         self.camera_controller.dolly(delta_y);
         self.camera.set_view(self.camera_controller.view_matrix());
+    }
+
+    fn frame_graph_snapshot_source(&mut self) -> Option<&mut Renderer> {
+        Some(&mut self.renderer)
     }
 }
 

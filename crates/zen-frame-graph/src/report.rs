@@ -131,6 +131,7 @@ pub struct AccessReport {
     pub id: AccessId,
     pub pass: PassId,
     pub resource: ResourceId,
+    pub view: Option<ViewId>,
     pub role: AccessRole,
     pub mode: AccessMode,
     pub consumes_previous: bool,

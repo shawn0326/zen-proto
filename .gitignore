@@ -1,4 +1,5 @@
 /target
 /.cargo-target
+/captures
 flamegraph.svg
 mytrace.json

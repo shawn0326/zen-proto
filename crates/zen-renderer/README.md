@@ -33,9 +33,10 @@ Each internal `Pass::record` method creates one FrameGraph node, declares its co
 contract, and installs its executor. `MeshFrameRecorder` only selects ordering and branches. A
 `Pipeline` name is used only for native wgpu compute/render pipelines or their creation/cache.
 
-Recording is grouped as `Frame Targets` and `Mesh`, with nested `Main View`, optional
-`Occlusion Refinement`, `Visibility History`, optional `Debug View`, and optional
-`Stats Readback` groups. These groups appear in full CPU reports. Applications may call
+Recording keeps the two-pass Mesh flow at the root so cull, prepare, and draw nodes remain
+continuous. The repeated mip chains are collapsed into optional `Initial Hi-Z Pyramid` and
+`Final Hi-Z Pyramid` groups; `Frame Targets`, optional `Debug View`, and optional
+`Stats Readback` remain independent root groups. These groups appear in full CPU reports. Applications may call
 `Renderer::set_gpu_debug_groups_enabled(true)` to mirror retained group paths into GPU debug
 markers; marker emission is disabled by default and does not alter graph topology.
 
@@ -86,5 +87,14 @@ Requests made while a previous readback is pending remain queued until that
 result is taken. Timing support is enabled when the selected adapter exposes
 `TIMESTAMP_QUERY`; unsupported adapters still render normally and return an
 `Unavailable` timing report.
+
+With the `snapshot` feature, `Renderer::request_frame_graph_snapshot()`
+coalesces repeated requests and captures the next eligible successful frame.
+`Renderer::take_frame_graph_snapshot()` non-blockingly returns the Snapshot 1.0
+object or a producer error after GPU timing and post-execution pool statistics
+are ready. Snapshot takes priority over a new ordinary timing request; an
+already-pending ordinary readback delays capture and its queued request is not
+lost. Unsupported timestamp queries still produce a Snapshot with an explicit
+unavailable timing result. Normal frames do not request a Full report.
 
 The crate is currently private to the workspace (`publish = false`).
