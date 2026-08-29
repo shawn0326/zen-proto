@@ -12,11 +12,10 @@ pub(crate) struct VertexPacked {
     pub px: f32,
     pub py: f32,
     pub pz: f32,
-    pub n_oct: u32, // 法线oct编码（snorm16x2打包到u32）
-    pub uv01: u32,  // UV：unorm16x2打包到u32
-    pub c: u32,     // RGBA8颜色打包到u32
-    pub _pad0: u32, // 显式补齐到32B
-    pub _pad1: u32,
+    pub n_oct: u32,   // 法线oct编码（snorm16x2打包到u32）
+    pub uv: [f32; 2], // 保留 Clamp 语义和 [0, 1] 外的纹理坐标
+    pub c: u32,       // RGBA8颜色打包到u32
+    pub _pad0: u32,   // 显式补齐到32B
 }
 
 impl VertexPacked {
@@ -41,25 +40,6 @@ impl VertexPacked {
         let b = ((c >> 16) & 0xFF) as f32 / 255.0;
         let a = ((c >> 24) & 0xFF) as f32 / 255.0;
         glam::Vec4::new(r, g, b, a)
-    }
-
-    #[inline]
-    fn pack_unorm16x2(uv: glam::Vec2) -> u32 {
-        fn q(x: f32) -> u32 {
-            let x = x.rem_euclid(1.0);
-            (x * 65535.0 + 0.5) as u32
-        }
-
-        let u = q(uv.x);
-        let v = q(uv.y);
-        (u & 0xFFFF) | ((v & 0xFFFF) << 16)
-    }
-
-    #[inline]
-    fn unpack_unorm16x2(p: u32) -> glam::Vec2 {
-        let u = (p & 0xFFFF) as f32 / 65535.0;
-        let v = ((p >> 16) & 0xFFFF) as f32 / 65535.0;
-        glam::Vec2::new(u, v)
     }
 
     #[inline]
@@ -135,10 +115,9 @@ impl From<&Vertex> for VertexPacked {
             py: v.position.y,
             pz: v.position.z,
             n_oct: Self::pack_normal_oct_snorm16x2(normal_xyz),
-            uv01: Self::pack_unorm16x2(v.uv),
+            uv: v.uv.to_array(),
             c: Self::pack_rgba8(v.color),
             _pad0: 0,
-            _pad1: 0,
         }
     }
 }
@@ -150,7 +129,45 @@ impl From<&VertexPacked> for Vertex {
             position: glam::Vec4::new(v.px, v.py, v.pz, 1.0),
             normal: glam::Vec4::new(n.x, n.y, n.z, 0.0),
             color: VertexPacked::unpack_rgba8(v.c),
-            uv: VertexPacked::unpack_unorm16x2(v.uv01),
+            uv: glam::Vec2::from_array(v.uv),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Vertex, VertexPacked};
+
+    fn vertex_with_uv(uv: glam::Vec2) -> Vertex {
+        Vertex {
+            position: glam::Vec4::new(1.0, 2.0, 3.0, 1.0),
+            normal: glam::Vec4::Z,
+            color: glam::Vec4::ONE,
+            uv,
+        }
+    }
+
+    #[test]
+    fn packed_vertex_keeps_the_32_byte_gpu_layout() {
+        assert_eq!(std::mem::size_of::<VertexPacked>(), 32);
+        assert_eq!(std::mem::align_of::<VertexPacked>(), 16);
+        assert_eq!(std::mem::offset_of!(VertexPacked, uv), 16);
+        assert_eq!(std::mem::offset_of!(VertexPacked, c), 24);
+    }
+
+    #[test]
+    fn packed_vertex_preserves_uv_boundaries_and_out_of_range_values() {
+        let cases = [
+            glam::Vec2::ZERO,
+            glam::Vec2::ONE,
+            glam::Vec2::new(-0.25, 1.25),
+            glam::Vec2::new(-128.5, 2048.125),
+        ];
+
+        for expected in cases {
+            let packed = VertexPacked::from(&vertex_with_uv(expected));
+            let unpacked = Vertex::from(&packed);
+            assert_eq!(unpacked.uv, expected);
         }
     }
 }
@@ -209,8 +226,6 @@ pub(crate) struct MeshStorage {
 
 impl MeshStorage {
     pub fn from_meshes(device: &wgpu::Device, meshes: &[Mesh]) -> Self {
-        use wgpu::util::DeviceExt;
-
         let total_vertices: usize = meshes.iter().map(|m| m.vertices.len()).sum();
         let total_indices: usize = meshes.iter().map(|m| m.indices.len()).sum();
 
@@ -236,23 +251,24 @@ impl MeshStorage {
             });
         }
 
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("meshes.vertex_buffer"),
-            contents: bytemuck::cast_slice(&all_vertices),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("meshes.index_buffer"),
-            contents: bytemuck::cast_slice(&all_indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-
-        let mesh_table_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("meshes.mesh_table_buffer"),
-            contents: bytemuck::cast_slice(&mesh_table),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        let vertex_buffer = super::create_non_empty_buffer_init(
+            device,
+            "meshes.vertex_buffer",
+            &all_vertices,
+            wgpu::BufferUsages::STORAGE,
+        );
+        let index_buffer = super::create_non_empty_buffer_init(
+            device,
+            "meshes.index_buffer",
+            &all_indices,
+            wgpu::BufferUsages::INDEX,
+        );
+        let mesh_table_buffer = super::create_non_empty_buffer_init(
+            device,
+            "meshes.mesh_table_buffer",
+            &mesh_table,
+            wgpu::BufferUsages::STORAGE,
+        );
 
         Self {
             vertex_buffer,

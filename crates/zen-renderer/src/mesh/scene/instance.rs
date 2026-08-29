@@ -14,13 +14,12 @@ pub(crate) struct InstanceStorage {
 
 impl InstanceStorage {
     pub fn from_instances(device: &wgpu::Device, instances: &[Instance]) -> Self {
-        use wgpu::util::DeviceExt;
-
-        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("instances.instance_buffer"),
-            contents: bytemuck::cast_slice(instances),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        let instance_buffer = super::create_non_empty_buffer_init(
+            device,
+            "instances.instance_buffer",
+            instances,
+            wgpu::BufferUsages::STORAGE,
+        );
 
         Self {
             instance_buffer,

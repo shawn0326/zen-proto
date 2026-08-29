@@ -14,8 +14,6 @@ pub struct LoadGltfOptions {
     pub global_scale: f32,
     pub flip_v: bool,
     /// Bake node transforms into vertex positions/normals and emit identity instances.
-    /// This avoids current renderer limitations around non-uniform scale normal transforms and
-    /// bounding-sphere culling not accounting for instance scale.
     pub bake_node_transform: bool,
 }
 
@@ -265,7 +263,6 @@ fn build_engine_mesh_from_primitive(
                 if options.flip_v {
                     v = 1.0 - v;
                 }
-                // VertexPacked packing will wrap UVs into [0,1) (repeat-style).
                 glam::Vec2::new(u, v)
             })
             .collect()

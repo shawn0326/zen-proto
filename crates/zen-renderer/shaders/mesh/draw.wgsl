@@ -5,10 +5,9 @@ struct VertexPacked {
     py: f32,
     pz: f32,
     n_oct: u32,
-    uv01: u32,
+    uv: vec2f,
     c: u32,
     _pad0: u32,
-    _pad1: u32,
 };
 
 struct Material {
@@ -68,11 +67,37 @@ fn decode_normal(v: VertexPacked) -> vec3f {
 }
 
 fn decode_uv(v: VertexPacked) -> vec2f {
-    return unpack2x16unorm(v.uv01);
+    return v.uv;
 }
 
 fn decode_color(v: VertexPacked) -> vec4f {
     return unpack4x8unorm(v.c);
+}
+
+fn normalize_or(v: vec3f, fallback: vec3f) -> vec3f {
+    let length_squared = dot(v, v);
+    if (length_squared > 0.0) {
+        return v * inverseSqrt(length_squared);
+    }
+    return fallback;
+}
+
+fn transform_normal(model: mat4x4f, local_normal: vec3f) -> vec3f {
+    let model_x = model[0].xyz;
+    let model_y = model[1].xyz;
+    let model_z = model[2].xyz;
+
+    // These are the columns of determinant(model) * inverse-transpose(model).
+    // Retaining the determinant sign makes reflected transforms match a true
+    // inverse-transpose while normalization lets us avoid an unstable division.
+    let cofactor_x = cross(model_y, model_z);
+    let cofactor_y = cross(model_z, model_x);
+    let cofactor_z = cross(model_x, model_y);
+    let determinant = dot(model_x, cofactor_x);
+    let orientation = select(-1.0, 1.0, determinant >= 0.0);
+    let cofactor_normal = mat3x3f(cofactor_x, cofactor_y, cofactor_z) * local_normal;
+
+    return normalize_or(cofactor_normal * orientation, local_normal);
 }
 
 @vertex
@@ -89,12 +114,7 @@ fn vs_main(
     let local_color = decode_color(v);
     let uv = decode_uv(v);
 
-    let normal_mat = mat3x3f(
-        model[0].xyz,
-        model[1].xyz,
-        model[2].xyz
-    );
-    let world_normal = normalize(normal_mat * local_normal);
+    let world_normal = transform_normal(model, local_normal);
 
     var out: VsOut;
     out.pos = camera.view_proj * model * vec4f(pos, 1.0);
@@ -108,6 +128,7 @@ fn vs_main(
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4f {
     let light_dir = normalize(vec3f(0.5, 1.0, 0.8));
+    let world_normal = normalize_or(in.normal, vec3f(0.0, 0.0, 1.0));
 
     let material = materials[in.material_id];
     let albedo_tex_id = material.tex_ids.x;
@@ -123,7 +144,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     let ao_tex = textureSample(textures[occlusion_tex_id], tex_sampler, in.uv).r;
     let ao = clamp(ao_tex * material.emissive_ao.w, 0.0, 1.0);
 
-    let n_dot_l = max(dot(in.normal, light_dir), 0.0);
+    let n_dot_l = max(dot(world_normal, light_dir), 0.0);
     let lighted = n_dot_l * albedo.rgb;
 
     let ambient_color = vec3f(0.01, 0.01, 0.01);

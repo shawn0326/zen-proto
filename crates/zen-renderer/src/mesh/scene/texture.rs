@@ -25,6 +25,8 @@ impl Texture {
     }
 
     pub fn validate(&self) {
+        assert!(self.width > 0, "Texture width must be non-zero");
+        assert!(self.height > 0, "Texture height must be non-zero");
         let expected = self
             .width
             .checked_mul(self.height)
@@ -209,6 +211,16 @@ impl TextureStorage {
         let max_texture_count = Self::DEFAULT_MAX_TEXTURE_COUNT
             .min(device.limits().max_binding_array_elements_per_shader_stage);
 
+        // Bindless texture arrays still require at least one bound view. Keep an internal white
+        // fallback so a scene with no user textures remains a valid no-op scene.
+        let fallback_texture;
+        let textures = if textures.is_empty() {
+            fallback_texture = Texture::white_1x1();
+            std::slice::from_ref(&fallback_texture)
+        } else {
+            textures
+        };
+
         assert!(
             textures.len() as u32 <= max_texture_count,
             "Too many textures: {} > max_texture_count {}",
@@ -238,6 +250,14 @@ impl TextureStorage {
 
         for texture in textures {
             texture.validate();
+            assert!(
+                texture.width <= device.limits().max_texture_dimension_2d
+                    && texture.height <= device.limits().max_texture_dimension_2d,
+                "Texture dimensions {}x{} exceed the device 2D texture limit {}",
+                texture.width,
+                texture.height,
+                device.limits().max_texture_dimension_2d
+            );
             let (gpu_texture, view, mip_level_count) =
                 Self::create_gpu_texture_and_view(device, queue, texture);
             gpu_textures.push(gpu_texture);
@@ -368,5 +388,34 @@ impl TextureStorage {
     fn mip_level_count_for_size(width: u32, height: u32) -> u32 {
         let max_dim = width.max(height).max(1);
         32 - max_dim.leading_zeros()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Texture;
+
+    #[test]
+    #[should_panic(expected = "Texture width must be non-zero")]
+    fn zero_width_is_rejected_before_gpu_resource_creation() {
+        Texture {
+            width: 0,
+            height: 1,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            pixels: Vec::new(),
+        }
+        .validate();
+    }
+
+    #[test]
+    #[should_panic(expected = "Texture height must be non-zero")]
+    fn zero_height_is_rejected_before_gpu_resource_creation() {
+        Texture {
+            width: 1,
+            height: 0,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            pixels: Vec::new(),
+        }
+        .validate();
     }
 }

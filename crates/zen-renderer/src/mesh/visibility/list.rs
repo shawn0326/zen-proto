@@ -28,9 +28,10 @@ pub struct VisibilityList {
 
 impl VisibilityList {
     pub fn new(device: &wgpu::Device, label: &str, max_instance_count: u32) -> Self {
+        let backing_instance_count = max_instance_count.max(1) as u64;
         let visible_instances = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(&format!("{}.visible_instances", label)),
-            size: (max_instance_count as u64) * std::mem::size_of::<u32>() as u64,
+            size: backing_instance_count * std::mem::size_of::<u32>() as u64,
             usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
@@ -54,8 +55,7 @@ impl VisibilityList {
 
         let draw_args = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(&format!("{}.draw_args", label)),
-            size: (max_instance_count as u64)
-                * std::mem::size_of::<DrawIndexedIndirectArgs>() as u64,
+            size: backing_instance_count * std::mem::size_of::<DrawIndexedIndirectArgs>() as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
             mapped_at_creation: false,
         });

@@ -4,6 +4,28 @@ mod material;
 mod resources;
 mod texture;
 
+fn create_non_empty_buffer_init<T: bytemuck::Pod + bytemuck::Zeroable>(
+    device: &wgpu::Device,
+    label: &str,
+    contents: &[T],
+    usage: wgpu::BufferUsages,
+) -> wgpu::Buffer {
+    use wgpu::util::DeviceExt;
+
+    let dummy = T::zeroed();
+    let contents = if contents.is_empty() {
+        bytemuck::bytes_of(&dummy)
+    } else {
+        bytemuck::cast_slice(contents)
+    };
+
+    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some(label),
+        contents,
+        usage,
+    })
+}
+
 pub use geometry::{Mesh, Vertex};
 pub use instance::Instance;
 pub use material::Material;

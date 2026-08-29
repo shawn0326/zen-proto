@@ -14,13 +14,12 @@ pub(crate) struct MaterialStorage {
 
 impl MaterialStorage {
     pub fn from_materials(device: &wgpu::Device, materials: &[Material]) -> Self {
-        use wgpu::util::DeviceExt;
-
-        let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("materials.material_buffer"),
-            contents: bytemuck::cast_slice(materials),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        let material_buffer = super::create_non_empty_buffer_init(
+            device,
+            "materials.material_buffer",
+            materials,
+            wgpu::BufferUsages::STORAGE,
+        );
 
         Self { material_buffer }
     }

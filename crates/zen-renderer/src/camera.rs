@@ -163,14 +163,102 @@ impl Camera {
         let m2 = row(2);
         let m3 = row(3);
 
+        let normalize_plane = |plane: glam::Vec4| {
+            let normal_length = plane.truncate().length();
+            if normal_length > 0.0 && normal_length.is_finite() {
+                plane / normal_length
+            } else {
+                // Infinite projections have no finite far plane. A constant-positive plane keeps
+                // every sphere on the inside instead of introducing NaNs into culling.
+                glam::Vec4::W
+            }
+        };
+
         let mut planes = [glam::Vec4::ZERO; 6];
-        planes[0] = (m3 + m0).normalize(); // left
-        planes[1] = (m3 - m0).normalize(); // right
-        planes[2] = (m3 + m1).normalize(); // bottom
-        planes[3] = (m3 - m1).normalize(); // top
-        planes[4] = (m3 + m2).normalize(); // near
-        planes[5] = (m3 - m2).normalize(); // far
+        planes[0] = normalize_plane(m3 + m0); // left: x >= -w
+        planes[1] = normalize_plane(m3 - m0); // right: x <= w
+        planes[2] = normalize_plane(m3 + m1); // bottom: y >= -w
+        planes[3] = normalize_plane(m3 - m1); // top: y <= w
+        planes[4] = normalize_plane(m2); // near: z >= 0
+        planes[5] = normalize_plane(m3 - m2); // far: z <= w
 
         planes
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use glam::{Quat, Vec3, Vec4};
+
+    fn signed_distance(plane: Vec4, point: Vec3) -> f32 {
+        plane.dot(point.extend(1.0))
+    }
+
+    fn assert_approx_eq(actual: f32, expected: f32) {
+        let error = (actual - expected).abs();
+        assert!(
+            error <= 2.0e-3,
+            "expected {expected}, got {actual} (absolute error {error})"
+        );
+    }
+
+    #[test]
+    fn perspective_frustum_matches_webgpu_clip_depth_and_world_space_distance() {
+        let near = 0.25;
+        let far = 80.0;
+        let projection = PerspectiveProjection {
+            fovy_deg: 70.0,
+            aspect: 16.0 / 9.0,
+            near,
+            far,
+        };
+        let transform = Mat4::from_rotation_translation(
+            Quat::from_rotation_y(0.37) * Quat::from_rotation_x(-0.21),
+            Vec3::new(12.0, -3.5, 4.8),
+        );
+        let planes = Camera::new(transform, projection).frustum();
+
+        for plane in planes {
+            assert_approx_eq(plane.truncate().length(), 1.0);
+        }
+
+        let world_point = |camera_space: Vec3| transform.transform_point3(camera_space);
+        let near_plane = planes[4];
+        assert_approx_eq(
+            signed_distance(near_plane, world_point(Vec3::new(0.0, 0.0, -near))),
+            0.0,
+        );
+        assert_approx_eq(
+            signed_distance(near_plane, world_point(Vec3::new(0.0, 0.0, -(near + 2.0)))),
+            2.0,
+        );
+        assert_approx_eq(
+            signed_distance(near_plane, world_point(Vec3::new(0.0, 0.0, -(near - 0.1)))),
+            -0.1,
+        );
+
+        let far_plane = planes[5];
+        assert_approx_eq(
+            signed_distance(far_plane, world_point(Vec3::new(0.0, 0.0, -far))),
+            0.0,
+        );
+        assert_approx_eq(
+            signed_distance(far_plane, world_point(Vec3::new(0.0, 0.0, -(far - 3.0)))),
+            3.0,
+        );
+        assert_approx_eq(
+            signed_distance(far_plane, world_point(Vec3::new(0.0, 0.0, -(far + 3.0)))),
+            -3.0,
+        );
+    }
+
+    #[test]
+    fn infinite_perspective_uses_an_always_inside_far_plane() {
+        let projection = Mat4::perspective_infinite_rh(60.0_f32.to_radians(), 1.0, 0.1);
+        let planes = Camera::from_projection(projection).frustum();
+
+        assert_eq!(planes[5], Vec4::W);
+        assert!(signed_distance(planes[5], Vec3::new(0.0, 0.0, -1.0e9)) > 0.0);
     }
 }

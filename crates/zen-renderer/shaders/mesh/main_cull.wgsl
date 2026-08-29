@@ -71,7 +71,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let local_center = vec4<f32>(mesh.sphere.xyz, 1.0);
     let world_center = (inst.model * local_center).xyz;
-    let radius = mesh.sphere.w;
+    let c0 = inst.model[0].xyz;
+    let c1 = inst.model[1].xyz;
+    let c2 = inst.model[2].xyz;
+    let max_scale = max(length(c0), max(length(c1), length(c2)));
+    let radius = mesh.sphere.w * max_scale;
 
     var visible = true;
 

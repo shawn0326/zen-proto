@@ -304,6 +304,54 @@ mod tests {
         assert!(state.should_execute());
     }
 
+    #[test]
+    fn empty_mesh_scene_constructs_and_renders_as_a_noop() {
+        let bindless = wgpu::Features::TEXTURE_BINDING_ARRAY
+            | wgpu::Features::PARTIALLY_BOUND_BINDING_ARRAY
+            | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING;
+        let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor {
+            required_features: bindless | wgpu::Features::MULTI_DRAW_INDIRECT_COUNT,
+            required_limits: wgpu::Limits {
+                max_binding_array_elements_per_shader_stage: 16,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let mesh = crate::mesh::MeshRenderer::new(&device, &queue, format, &[], &[], &[], &[]);
+        let surface = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("empty-scene-test-surface"),
+            size: wgpu::Extent3d {
+                width: 8,
+                height: 8,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let mut renderer = super::Renderer::new(&device, mesh);
+
+        renderer
+            .render(
+                &device,
+                &queue,
+                crate::FrameInput {
+                    frame_index: 0,
+                    surface_texture: &surface,
+                    mesh: crate::mesh::MeshFrameInput {
+                        camera: crate::camera::Camera::default(),
+                        debug_camera: None,
+                        enable_occlusion_culling: true,
+                    },
+                },
+            )
+            .unwrap();
+    }
+
     #[cfg(feature = "snapshot")]
     #[test]
     fn snapshot_requests_coalesce_take_priority_and_move_the_full_report() {
