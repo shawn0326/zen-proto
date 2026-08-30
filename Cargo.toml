@@ -2,10 +2,15 @@
 resolver = "3"
 members = [
     "crates/zen-frame-graph",
-    "crates/zen-renderer",
+    "crates/zen-render",
+    "crates/zen-render-mesh",
     "apps/zen-demo",
 ]
-default-members = ["crates/zen-frame-graph", "crates/zen-renderer"]
+default-members = [
+    "crates/zen-frame-graph",
+    "crates/zen-render",
+    "crates/zen-render-mesh",
+]
 
 [workspace.package]
 edition = "2024"

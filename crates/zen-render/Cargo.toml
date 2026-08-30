@@ -1,0 +1,18 @@
+[package]
+name = "zen-render"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+description = "Domain-independent FrameGraph render host and frame composition contracts"
+readme = "README.md"
+
+[features]
+default = []
+snapshot = ["zen-frame-graph/snapshot"]
+
+[dependencies]
+zen-frame-graph = { path = "../zen-frame-graph" }
+wgpu.workspace = true
+
+[dev-dependencies]
+wgpu = { workspace = true, features = ["noop"] }

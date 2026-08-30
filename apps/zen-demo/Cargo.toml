@@ -5,7 +5,9 @@ edition.workspace = true
 publish = false
 
 [dependencies]
-zen-renderer = { path = "../../crates/zen-renderer", features = ["snapshot"] }
+zen-frame-graph = { path = "../../crates/zen-frame-graph" }
+zen-render = { path = "../../crates/zen-render", features = ["snapshot"] }
+zen-render-mesh = { path = "../../crates/zen-render-mesh" }
 wgpu.workspace = true
 glam = { workspace = true, features = ["rand"] }
 winit.workspace = true
@@ -17,3 +19,4 @@ thiserror.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
+wgpu = { workspace = true, features = ["noop"] }

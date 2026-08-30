@@ -3440,7 +3440,9 @@ dependencies = [
  "thiserror 2.0.17",
  "wgpu",
  "winit",
- "zen-renderer",
+ "zen-frame-graph",
+ "zen-render",
+ "zen-render-mesh",
 ]
 
 [[package]]
@@ -3456,7 +3458,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "zen-renderer"
+name = "zen-render"
+version = "0.1.0"
+dependencies = [
+ "wgpu",
+ "zen-frame-graph",
+]
+
+[[package]]
+name = "zen-render-mesh"
 version = "0.1.0"
 dependencies = [
  "bytemuck",

@@ -4,22 +4,22 @@ use std::sync::Arc;
 use winit::window::Window;
 use zen_demo::{
     Example,
+    device::request_device_and_queue,
     orbit_camera_controller::{OrbitCameraController, OrbitCameraControllerOptions},
+    rendering::{ForwardFrameComposer, ForwardRenderHost},
     run,
     surface_state::SurfaceState,
 };
-use zen_renderer::{
-    FrameInput, GpuTimingReport, Renderer,
-    camera::{Camera, PerspectiveProjection},
-    device::request_device_and_queue,
-    mesh::{Instance, Material, Mesh, MeshFrameInput, MeshRenderer, Texture},
+use zen_render::{GpuTimingReport, RenderFrameInput};
+use zen_render_mesh::{
+    Camera, Instance, Material, Mesh, MeshRenderInput, MeshRenderer, PerspectiveProjection, Texture,
 };
 
 struct Demo {
     device: wgpu::Device,
     queue: wgpu::Queue,
     surface: SurfaceState,
-    renderer: Renderer,
+    render_host: ForwardRenderHost,
     projection: PerspectiveProjection,
     camera: Camera,
     debug_camera: Camera,
@@ -135,12 +135,13 @@ impl Example for Demo {
             &instances,
             &textures,
         );
-        let renderer = Renderer::new(&device, mesh);
+        let composer = ForwardFrameComposer::new(mesh, surface.format());
+        let render_host = ForwardRenderHost::new(&device, composer);
         Demo {
             device,
             queue,
             surface,
-            renderer,
+            render_host,
             projection,
             camera,
             debug_camera,
@@ -168,8 +169,8 @@ impl Example for Demo {
         // Low-frequency stats: request once per ~120 frames, print when ready.
         self.frame_index += 1;
         if self.frame_index.is_multiple_of(120) {
-            self.renderer.mesh_mut().request_stats();
-            self.renderer.request_gpu_timing();
+            self.render_host.composer_mut().mesh_mut().request_stats();
+            self.render_host.request_gpu_timing();
         }
 
         let debug_camera = if self.use_debug_camera {
@@ -180,24 +181,29 @@ impl Example for Demo {
         let Some(surface_texture) = self.surface.acquire(&self.device) else {
             return;
         };
-        self.renderer
-            .render(
+        self.render_host
+            .render_frame(
                 &self.device,
                 &self.queue,
-                FrameInput {
-                    frame_index: self.frame_index,
-                    surface_texture: &surface_texture.texture,
-                    mesh: MeshFrameInput {
+                RenderFrameInput::new(
+                    self.frame_index,
+                    &surface_texture.texture,
+                    MeshRenderInput {
                         camera: self.camera,
                         debug_camera,
                         enable_occlusion_culling: self.enable_occlusion_culling,
                     },
-                },
+                ),
             )
             .expect("FrameGraph rendering failed");
         self.queue.present(surface_texture);
 
-        if let Some(stats) = self.renderer.mesh_mut().take_stats(&self.device) {
+        if let Some(stats) = self
+            .render_host
+            .composer_mut()
+            .mesh_mut()
+            .take_stats(&self.device)
+        {
             println!(
                 "Render stats: total={} main_cull_visible={} drawn={} (A: vis={} draw={} | B: vis={} draw={})",
                 stats.total_instances,
@@ -209,7 +215,7 @@ impl Example for Demo {
                 stats.list_b_drawn,
             );
         }
-        if let Some(timing) = self.renderer.take_gpu_timing() {
+        if let Some(timing) = self.render_host.take_gpu_timing() {
             print_gpu_timing(timing);
         }
     }
@@ -241,8 +247,8 @@ impl Example for Demo {
         }
     }
 
-    fn frame_graph_snapshot_source(&mut self) -> Option<&mut Renderer> {
-        Some(&mut self.renderer)
+    fn frame_graph_snapshot_source(&mut self) -> Option<&mut ForwardRenderHost> {
+        Some(&mut self.render_host)
     }
 }
 

@@ -3,16 +3,14 @@ use std::sync::Arc;
 use winit::window::Window;
 use zen_demo::{
     Example,
+    device::request_device_and_queue,
     orbit_camera_controller::{OrbitCameraController, OrbitCameraControllerOptions},
+    rendering::{ForwardFrameComposer, ForwardRenderHost},
     run,
     surface_state::SurfaceState,
 };
-use zen_renderer::{
-    FrameInput, GpuTimingReport, Renderer,
-    camera::{Camera, PerspectiveProjection},
-    device::request_device_and_queue,
-    mesh::{MeshFrameInput, MeshRenderer},
-};
+use zen_render::{GpuTimingReport, RenderFrameInput};
+use zen_render_mesh::{Camera, MeshRenderInput, MeshRenderer, PerspectiveProjection};
 
 use zen_demo::gltf_loader::{LoadGltfOptions, load_gltf};
 
@@ -20,7 +18,7 @@ struct Demo {
     device: wgpu::Device,
     queue: wgpu::Queue,
     surface: SurfaceState,
-    renderer: Renderer,
+    render_host: ForwardRenderHost,
     projection: PerspectiveProjection,
     camera: Camera,
     camera_controller: OrbitCameraController,
@@ -90,13 +88,14 @@ impl Example for Demo {
             &model.instances,
             &model.textures,
         );
-        let renderer = Renderer::new(&device, mesh);
+        let composer = ForwardFrameComposer::new(mesh, surface.format());
+        let render_host = ForwardRenderHost::new(&device, composer);
 
         Self {
             device,
             queue,
             surface,
-            renderer,
+            render_host,
             projection,
             camera,
             camera_controller,
@@ -118,31 +117,36 @@ impl Example for Demo {
     fn render(&mut self) {
         self.frame_index += 1;
         if self.frame_index.is_multiple_of(120) {
-            self.renderer.mesh_mut().request_stats();
-            self.renderer.request_gpu_timing();
+            self.render_host.composer_mut().mesh_mut().request_stats();
+            self.render_host.request_gpu_timing();
         }
 
         let Some(surface_texture) = self.surface.acquire(&self.device) else {
             return;
         };
-        self.renderer
-            .render(
+        self.render_host
+            .render_frame(
                 &self.device,
                 &self.queue,
-                FrameInput {
-                    frame_index: self.frame_index,
-                    surface_texture: &surface_texture.texture,
-                    mesh: MeshFrameInput {
+                RenderFrameInput::new(
+                    self.frame_index,
+                    &surface_texture.texture,
+                    MeshRenderInput {
                         camera: self.camera,
                         debug_camera: None,
                         enable_occlusion_culling: true,
                     },
-                },
+                ),
             )
             .expect("FrameGraph rendering failed");
         self.queue.present(surface_texture);
 
-        if let Some(stats) = self.renderer.mesh_mut().take_stats(&self.device) {
+        if let Some(stats) = self
+            .render_host
+            .composer_mut()
+            .mesh_mut()
+            .take_stats(&self.device)
+        {
             println!(
                 "Render stats: total={} main_cull_visible={} drawn={} (A: vis={} draw={} | B: vis={} draw={})",
                 stats.total_instances,
@@ -154,7 +158,7 @@ impl Example for Demo {
                 stats.list_b_drawn,
             );
         }
-        if let Some(timing) = self.renderer.take_gpu_timing() {
+        if let Some(timing) = self.render_host.take_gpu_timing() {
             print_gpu_timing(timing);
         }
     }
@@ -169,12 +173,12 @@ impl Example for Demo {
         self.camera.set_view(self.camera_controller.view_matrix());
     }
 
-    fn frame_graph_snapshot_source(&mut self) -> Option<&mut Renderer> {
-        Some(&mut self.renderer)
+    fn frame_graph_snapshot_source(&mut self) -> Option<&mut ForwardRenderHost> {
+        Some(&mut self.render_host)
     }
 }
 
-fn compute_model_bounds(meshes: &[zen_renderer::mesh::Mesh]) -> (glam::Vec3, f32) {
+fn compute_model_bounds(meshes: &[zen_render_mesh::Mesh]) -> (glam::Vec3, f32) {
     let mut min = glam::Vec3::splat(f32::INFINITY);
     let mut max = glam::Vec3::splat(f32::NEG_INFINITY);
 

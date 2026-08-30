@@ -232,9 +232,13 @@ external nodes, apply a pool memory budget or eviction policy, merge or reorder
 passes, schedule async compute or multiple queues, analyze cross-frame
 dependencies, or expose a public SSA resource API. Structured render passes
 currently omit stencil, occlusion queries, and caller-defined timestamp writes.
-`zen-renderer` uses pool-backed transient textures for its per-frame depth
-target and Hi-Z pyramid. The demo acquires and presents surface
-textures; the renderer registers each acquired color texture as a logical
-`Surface` resource. Scene buffers, visibility history, and readback staging
-buffers remain imported. The crate remains `publish = false` until a repository
-license is selected and the renderer migration has matured further.
+`zen-render` owns the domain-neutral `RenderHost<C>` lifecycle: it imports each
+acquired surface texture once, asks an application-provided `FrameComposer` to
+record domain work, marks the present root, then compiles and executes the
+graph. In `zen-demo`, `ForwardFrameComposer` creates the shared transient depth
+target and passes typed graph handles to `zen-render-mesh`. The Mesh domain
+creates its transient Hi-Z resources and imports its persistent scene buffers,
+visibility history, and readback staging buffers; it neither imports the
+surface nor compiles or executes the graph. Surface acquisition and final
+presentation remain application-owned. The crate remains `publish = false`
+until a repository license is selected.

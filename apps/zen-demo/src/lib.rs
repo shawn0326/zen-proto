@@ -1,13 +1,16 @@
+pub mod device;
 #[allow(dead_code)]
 pub mod frame_rate_tracker;
 #[allow(dead_code)]
 pub mod gltf_loader;
 #[allow(dead_code)]
 pub mod orbit_camera_controller;
+pub mod rendering;
 pub mod surface_state;
 
 use frame_rate_tracker::FrameRateTracker;
 use pollster::FutureExt;
+use rendering::ForwardRenderHost;
 use std::time::{Duration, Instant};
 use std::{
     fs::{self, OpenOptions},
@@ -23,7 +26,7 @@ use winit::{
     keyboard::{KeyCode, ModifiersState, PhysicalKey},
     window::{Window, WindowId},
 };
-use zen_renderer::{FrameGraphSnapshotV1, Renderer, frame_graph_snapshot_to_json_pretty};
+use zen_render::{FrameGraphSnapshotV1, frame_graph_snapshot_to_json_pretty};
 
 #[allow(async_fn_in_trait)]
 pub trait Example {
@@ -36,7 +39,7 @@ pub trait Example {
     fn mouse_drag(&mut self, _dx: f32, _dy: f32) {}
     fn mouse_wheel(&mut self, _delta_y: f32) {}
     fn key_input(&mut self, _key_event: KeyEvent) {}
-    fn frame_graph_snapshot_source(&mut self) -> Option<&mut Renderer> {
+    fn frame_graph_snapshot_source(&mut self) -> Option<&mut ForwardRenderHost> {
         None
     }
 }
@@ -156,10 +159,10 @@ impl<E: Example> ApplicationHandler for App<E> {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                if let Some(example) = &mut self.example {
-                    if !handle_snapshot_key(example, &event, &self.modifiers) {
-                        example.key_input(event);
-                    }
+                if let Some(example) = &mut self.example
+                    && !handle_snapshot_key(example, &event, &self.modifiers)
+                {
+                    example.key_input(event);
                 }
             }
             WindowEvent::ModifiersChanged(modifiers) => {
@@ -231,7 +234,7 @@ fn is_snapshot_shortcut(physical_key: PhysicalKey, modifiers: ModifiersState) ->
 fn poll_and_write_snapshot<E: Example>(example: &mut E) {
     let result = example
         .frame_graph_snapshot_source()
-        .and_then(Renderer::take_frame_graph_snapshot);
+        .and_then(ForwardRenderHost::take_frame_graph_snapshot);
     let Some(result) = result else {
         return;
     };
@@ -247,7 +250,7 @@ fn poll_and_write_snapshot<E: Example>(example: &mut E) {
 #[derive(Debug, thiserror::Error)]
 pub enum SnapshotFileError {
     #[error("failed to encode Snapshot JSON: {0}")]
-    Encode(#[from] zen_renderer::SnapshotJsonError),
+    Encode(#[from] zen_render::SnapshotJsonError),
     #[error("failed to access capture path {path}: {source}")]
     Io {
         path: PathBuf,

@@ -1,0 +1,16 @@
+[package]
+name = "zen-render-mesh"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+description = "GPU-driven Mesh domain renderer for zen-frame-graph"
+readme = "README.md"
+
+[dependencies]
+zen-frame-graph = { path = "../zen-frame-graph" }
+wgpu.workspace = true
+glam.workspace = true
+bytemuck.workspace = true
+
+[dev-dependencies]
+wgpu = { workspace = true, features = ["noop"] }

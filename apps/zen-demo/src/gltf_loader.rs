@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use zen_renderer::mesh::{Instance, Material, Mesh, Texture, Vertex};
+use zen_render_mesh::{Instance, Material, Mesh, Texture, Vertex};
 
 pub struct LoadedGltfModel {
     pub meshes: Vec<Mesh>,
