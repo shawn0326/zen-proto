@@ -3,6 +3,8 @@ pub mod device;
 pub mod frame_rate_tracker;
 #[allow(dead_code)]
 pub mod gltf_loader;
+pub mod meshlet_benchmark;
+pub mod meshlet_support;
 #[allow(dead_code)]
 pub mod orbit_camera_controller;
 pub mod rendering;
@@ -10,7 +12,6 @@ pub mod surface_state;
 
 use frame_rate_tracker::FrameRateTracker;
 use pollster::FutureExt;
-use rendering::ForwardRenderHost;
 use std::time::{Duration, Instant};
 use std::{
     fs::{self, OpenOptions},
@@ -26,11 +27,38 @@ use winit::{
     keyboard::{KeyCode, ModifiersState, PhysicalKey},
     window::{Window, WindowId},
 };
-use zen_render::{FrameGraphSnapshotV1, frame_graph_snapshot_to_json_pretty};
+use zen_render::{
+    FrameComposer, FrameGraphSnapshotV1, RenderHost, SnapshotExportError,
+    frame_graph_snapshot_to_json_pretty,
+};
+
+/// Narrow snapshot interface shared by render hosts with different frame composers.
+pub trait FrameGraphSnapshotSource {
+    fn request_frame_graph_snapshot(&mut self);
+    fn take_frame_graph_snapshot(
+        &mut self,
+    ) -> Option<Result<FrameGraphSnapshotV1, SnapshotExportError>>;
+}
+
+impl<C: FrameComposer> FrameGraphSnapshotSource for RenderHost<C> {
+    fn request_frame_graph_snapshot(&mut self) {
+        RenderHost::request_frame_graph_snapshot(self);
+    }
+
+    fn take_frame_graph_snapshot(
+        &mut self,
+    ) -> Option<Result<FrameGraphSnapshotV1, SnapshotExportError>> {
+        RenderHost::take_frame_graph_snapshot(self)
+    }
+}
 
 #[allow(async_fn_in_trait)]
 pub trait Example {
     const NAME: &'static str;
+
+    fn window_attributes() -> winit::window::WindowAttributes {
+        Window::default_attributes()
+    }
 
     async fn init(window: Arc<Window>) -> Self;
     fn resize(&mut self, width: u32, height: u32);
@@ -39,7 +67,11 @@ pub trait Example {
     fn mouse_drag(&mut self, _dx: f32, _dy: f32) {}
     fn mouse_wheel(&mut self, _delta_y: f32) {}
     fn key_input(&mut self, _key_event: KeyEvent) {}
-    fn frame_graph_snapshot_source(&mut self) -> Option<&mut ForwardRenderHost> {
+    /// Allows finite workloads such as benchmarks to terminate the shared event loop cleanly.
+    fn should_exit(&self) -> bool {
+        false
+    }
+    fn frame_graph_snapshot_source(&mut self) -> Option<&mut dyn FrameGraphSnapshotSource> {
         None
     }
 }
@@ -84,11 +116,7 @@ impl<E: Example> App<E> {
 
 impl<E: Example> ApplicationHandler for App<E> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        let window = Arc::new(
-            event_loop
-                .create_window(Window::default_attributes())
-                .unwrap(),
-        );
+        let window = Arc::new(event_loop.create_window(E::window_attributes()).unwrap());
 
         if let Some(fps) = self.fixed_fps {
             println!("Using fixed FPS: {}", fps);
@@ -200,6 +228,9 @@ impl<E: Example> ApplicationHandler for App<E> {
                     ));
                     example.render();
                     poll_and_write_snapshot(example);
+                    if example.should_exit() {
+                        event_loop.exit();
+                    }
                 }
             }
             _ => (),
@@ -234,7 +265,7 @@ fn is_snapshot_shortcut(physical_key: PhysicalKey, modifiers: ModifiersState) ->
 fn poll_and_write_snapshot<E: Example>(example: &mut E) {
     let result = example
         .frame_graph_snapshot_source()
-        .and_then(ForwardRenderHost::take_frame_graph_snapshot);
+        .and_then(FrameGraphSnapshotSource::take_frame_graph_snapshot);
     let Some(result) = result else {
         return;
     };

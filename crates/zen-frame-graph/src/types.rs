@@ -6,6 +6,7 @@ use crate::{BufferRange, TextureSubresourceRange};
 pub enum ResourceKind {
     Texture,
     Buffer,
+    TextureSet,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -53,6 +54,7 @@ pub enum AccessRole {
     IndirectBuffer,
     BufferCopySrc,
     BufferCopyDst,
+    BindlessTextureSet,
 }
 
 impl AccessRole {
@@ -73,6 +75,7 @@ impl AccessRole {
             | Self::IndirectBuffer
             | Self::BufferCopySrc
             | Self::BufferCopyDst => ResourceKind::Buffer,
+            Self::BindlessTextureSet => ResourceKind::TextureSet,
         }
     }
 
@@ -275,6 +278,8 @@ pub enum UndefinedCause {
 pub enum ResourceRange {
     Buffer(BufferRange),
     Texture(Vec<TextureSubresourceRange>),
+    /// The complete opaque bindless texture table.
+    TextureSet,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -321,6 +326,17 @@ pub struct ExecutionOptions {
     pub gpu_debug_groups: bool,
     /// Caller-defined identity propagated to execution callbacks and timing reports.
     pub frame_index: u64,
+}
+
+/// Host time spent encoding command buffers and handing them to the queue for one execution.
+///
+/// Durations are accumulated across every retained FrameGraph execution segment. An external
+/// submission callback is opaque to the graph and its complete callback duration is therefore
+/// accounted as submit time.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ExecutionCpuTimings {
+    pub encode: std::time::Duration,
+    pub submit: std::time::Duration,
 }
 
 impl ExecutionOptions {

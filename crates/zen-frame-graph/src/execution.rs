@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Instant};
 
 use crate::{
     AccessId, AccessToken, BufferAccessMarker, ColorAttachmentOps, DebugGroupId,
@@ -249,7 +249,15 @@ pub(crate) fn execute(
     queue: &wgpu::Queue,
     options: ExecutionOptions,
 ) -> Result<(), FrameGraphError> {
-    execute_internal(frame, queue, options, false).map(|_| ())
+    execute_internal(frame, queue, options, false, false).map(|_| ())
+}
+
+pub(crate) fn execute_profiled(
+    frame: CompiledFrame<'_>,
+    queue: &wgpu::Queue,
+    options: ExecutionOptions,
+) -> Result<crate::ExecutionCpuTimings, FrameGraphError> {
+    execute_internal(frame, queue, options, false, true).map(|outcome| outcome.cpu)
 }
 
 pub(crate) fn execute_with_gpu_timing(
@@ -257,9 +265,28 @@ pub(crate) fn execute_with_gpu_timing(
     queue: &wgpu::Queue,
     options: ExecutionOptions,
 ) -> Result<crate::GpuTimingReadback, FrameGraphError> {
-    execute_internal(frame, queue, options, true)?.ok_or_else(|| FrameGraphError::Internal {
+    execute_internal(frame, queue, options, true, false)?
+        .gpu
+        .ok_or_else(|| FrameGraphError::Internal {
+            message: "timed execution completed without a GPU timing readback".into(),
+        })
+}
+
+pub(crate) fn execute_with_gpu_timing_profiled(
+    frame: CompiledFrame<'_>,
+    queue: &wgpu::Queue,
+    options: ExecutionOptions,
+) -> Result<(crate::GpuTimingReadback, crate::ExecutionCpuTimings), FrameGraphError> {
+    let outcome = execute_internal(frame, queue, options, true, true)?;
+    let readback = outcome.gpu.ok_or_else(|| FrameGraphError::Internal {
         message: "timed execution completed without a GPU timing readback".into(),
-    })
+    })?;
+    Ok((readback, outcome.cpu))
+}
+
+struct ExecutionOutcome {
+    gpu: Option<crate::GpuTimingReadback>,
+    cpu: crate::ExecutionCpuTimings,
 }
 
 fn execute_internal(
@@ -267,7 +294,8 @@ fn execute_internal(
     queue: &wgpu::Queue,
     options: ExecutionOptions,
     gpu_timing: bool,
-) -> Result<Option<crate::GpuTimingReadback>, FrameGraphError> {
+    cpu_profiling: bool,
+) -> Result<ExecutionOutcome, FrameGraphError> {
     let CompiledFrame {
         graph,
         plan,
@@ -348,9 +376,11 @@ fn execute_internal(
         .map(|node| (node.id, node))
         .collect::<HashMap<_, _>>();
 
+    let mut cpu = crate::ExecutionCpuTimings::default();
     for (segment_index, segment) in plan.execution_segments.iter().enumerate() {
         match segment.kind {
             ExecutionSegmentKind::FrameGraph => {
+                let encode_started = cpu_profiling.then(Instant::now);
                 let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some(&format!("frame-graph.segment.{segment_index}")),
                 });
@@ -492,11 +522,14 @@ fn execute_internal(
                             })?;
                         }
                         (NodeKind::Copy, NodeExecutor::Copy(operations)) => {
+                            write_encoder_timestamp(&mut encoder, &active_timing, *pass, true);
                             for operation in &operations {
                                 encode_copy_operation(&mut encoder, operation, &execution_native)?;
                             }
+                            write_encoder_timestamp(&mut encoder, &active_timing, *pass, false);
                         }
                         (NodeKind::ClearBuffer, NodeExecutor::ClearBuffer(operations)) => {
+                            write_encoder_timestamp(&mut encoder, &active_timing, *pass, true);
                             for operation in operations {
                                 let buffer = native_buffer(&execution_native, operation.buffer)?;
                                 encoder.clear_buffer(
@@ -505,6 +538,7 @@ fn execute_internal(
                                     Some(operation.size),
                                 );
                             }
+                            write_encoder_timestamp(&mut encoder, &active_timing, *pass, false);
                         }
                         (NodeKind::Command, NodeExecutor::Command(callback)) => {
                             callback(CommandContext {
@@ -532,7 +566,15 @@ fn execute_internal(
                         .expect("timing resolve segment requires an active timing session")
                         .encode_resolve(&mut encoder);
                 }
-                queue.submit(Some(encoder.finish()));
+                let command_buffer = encoder.finish();
+                if let Some(started) = encode_started {
+                    cpu.encode += started.elapsed();
+                }
+                let submit_started = cpu_profiling.then(Instant::now);
+                queue.submit(Some(command_buffer));
+                if let Some(started) = submit_started {
+                    cpu.submit += started.elapsed();
+                }
             }
             ExecutionSegmentKind::ExternalSubmission => {
                 let pass = *segment
@@ -562,6 +604,7 @@ fn execute_internal(
                         actual: node.kind,
                     });
                 };
+                let submit_started = cpu_profiling.then(Instant::now);
                 callback(ExternalSubmissionContext {
                     device: &device,
                     queue,
@@ -573,20 +616,44 @@ fn execute_internal(
                     },
                     frame_index: options.frame_index,
                 })?;
+                if let Some(started) = submit_started {
+                    cpu.submit += started.elapsed();
+                }
             }
         }
     }
     if let Some(mut timing) = active_timing.take() {
         timing.begin_readback();
-        return Ok(Some(timing.take_readback()));
+        return Ok(ExecutionOutcome {
+            gpu: Some(timing.take_readback()),
+            cpu,
+        });
     }
-    Ok(immediate_readback)
+    Ok(ExecutionOutcome {
+        gpu: immediate_readback,
+        cpu,
+    })
 }
 
 fn timestamp_indices(timing: &Option<Box<ActiveGpuTiming>>, pass: PassId) -> Option<(u32, u32)> {
     timing
         .as_ref()
         .and_then(|timing| timing.query_indices(pass))
+}
+
+fn write_encoder_timestamp(
+    encoder: &mut wgpu::CommandEncoder,
+    timing: &Option<Box<ActiveGpuTiming>>,
+    pass: PassId,
+    beginning: bool,
+) {
+    let Some((begin, end)) = timestamp_indices(timing, pass) else {
+        return;
+    };
+    let timing = timing
+        .as_ref()
+        .expect("timestamp indices require an active timing session");
+    encoder.write_timestamp(timing.query_set(), if beginning { begin } else { end });
 }
 
 fn transition_debug_groups(
@@ -607,8 +674,8 @@ fn transition_debug_groups(
     }
     for group in &target_path[common..] {
         let record = groups
-            .get(group.get() as usize)
-            .filter(|record| record.id == *group)
+            .iter()
+            .find(|record| record.id == *group)
             .ok_or_else(|| FrameGraphError::Internal {
                 message: format!("unknown debug group {group}"),
             })?;
@@ -625,8 +692,8 @@ fn debug_group_path(
     let mut path = Vec::new();
     while let Some(id) = group {
         let record = groups
-            .get(id.get() as usize)
-            .filter(|record| record.id == id)
+            .iter()
+            .find(|record| record.id == id)
             .ok_or_else(|| FrameGraphError::Internal {
                 message: format!("unknown debug group {id}"),
             })?;
@@ -771,6 +838,15 @@ fn preflight(
                     return Err(FrameGraphError::Internal {
                         message: format!(
                             "retained transient resource {} has no physical allocation",
+                            resource.id
+                        ),
+                    });
+                }
+            } else if resource.kind() == crate::ResourceKind::TextureSet {
+                if usages.get(&resource.id) != Some(&ResourceUsage::TextureSet) {
+                    return Err(FrameGraphError::Internal {
+                        message: format!(
+                            "bindless texture set {} has an invalid effective usage",
                             resource.id
                         ),
                     });
@@ -969,6 +1045,10 @@ fn validate_effective_usage(
                 message: "native resource kind does not match logical resource kind".into(),
             })
         }
+        (Some(ResourceUsage::TextureSet), _) => Err(FrameGraphError::NativeDescriptorMismatch {
+            resource,
+            message: "bindless texture sets do not have a native buffer or texture binding".into(),
+        }),
         _ => Ok(()),
     }
 }

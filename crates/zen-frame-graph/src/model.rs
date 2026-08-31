@@ -3,13 +3,14 @@ use core::ops::Range;
 use crate::{
     AccessId, AccessMode, AccessRole, BufferDesc, DebugGroupId, NodeKind, PassId,
     ResourceDescriptor, ResourceId, ResourceKind, ResourceOrigin, ResourceRange, RootReason,
-    TextureDesc, TextureSubresourceRange, TextureViewDesc, ValueId, ViewId,
+    TextureDesc, TextureSetDesc, TextureSubresourceRange, TextureViewDesc, ValueId, ViewId,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum NormalizedRange {
     Buffer(Range<u64>),
     Texture(Vec<TextureSubresourceRange>),
+    TextureSet,
 }
 
 impl NormalizedRange {
@@ -20,6 +21,7 @@ impl NormalizedRange {
                 range.end - range.start,
             )),
             Self::Texture(regions) => ResourceRange::Texture(regions.clone()),
+            Self::TextureSet => ResourceRange::TextureSet,
         }
     }
 
@@ -34,6 +36,7 @@ impl NormalizedRange {
                         && right.base_slice < left.base_slice + left.slice_count
                 })
             }),
+            (Self::TextureSet, Self::TextureSet) => true,
             _ => false,
         }
     }
@@ -42,6 +45,7 @@ impl NormalizedRange {
         match self {
             Self::Buffer(range) => range.is_empty(),
             Self::Texture(regions) => regions.iter().all(|region| region.slice_count == 0),
+            Self::TextureSet => false,
         }
     }
 }
@@ -62,6 +66,7 @@ impl ResourceRecord {
         match self.descriptor {
             ResourceDescriptor::Texture(_) => ResourceKind::Texture,
             ResourceDescriptor::Buffer(_) => ResourceKind::Buffer,
+            ResourceDescriptor::TextureSet(_) => ResourceKind::TextureSet,
         }
     }
 
@@ -69,20 +74,28 @@ impl ResourceRecord {
         match &self.descriptor {
             ResourceDescriptor::Texture(desc) => &desc.label,
             ResourceDescriptor::Buffer(desc) => &desc.label,
+            ResourceDescriptor::TextureSet(desc) => &desc.label,
         }
     }
 
     pub(crate) fn texture(&self) -> Option<&TextureDesc> {
         match &self.descriptor {
             ResourceDescriptor::Texture(desc) => Some(desc),
-            ResourceDescriptor::Buffer(_) => None,
+            ResourceDescriptor::Buffer(_) | ResourceDescriptor::TextureSet(_) => None,
         }
     }
 
     pub(crate) fn buffer(&self) -> Option<&BufferDesc> {
         match &self.descriptor {
             ResourceDescriptor::Buffer(desc) => Some(desc),
-            ResourceDescriptor::Texture(_) => None,
+            ResourceDescriptor::Texture(_) | ResourceDescriptor::TextureSet(_) => None,
+        }
+    }
+
+    pub(crate) fn texture_set(&self) -> Option<&TextureSetDesc> {
+        match &self.descriptor {
+            ResourceDescriptor::TextureSet(desc) => Some(desc),
+            ResourceDescriptor::Texture(_) | ResourceDescriptor::Buffer(_) => None,
         }
     }
 }

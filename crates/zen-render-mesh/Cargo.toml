@@ -11,6 +11,10 @@ zen-frame-graph = { path = "../zen-frame-graph" }
 wgpu.workspace = true
 glam.workspace = true
 bytemuck.workspace = true
+meshopt = "0.6.2"
+thiserror.workspace = true
 
 [dev-dependencies]
+naga = { version = "30.0.1", features = ["wgsl-in", "spv-out"] }
+pollster.workspace = true
 wgpu = { workspace = true, features = ["noop"] }

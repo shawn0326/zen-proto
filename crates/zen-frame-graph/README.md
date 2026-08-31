@@ -90,12 +90,21 @@ binding, callback or copy operation, descriptor/usage mismatch, or token
 resolved from the wrong pass produces a structured error. Surface acquisition
 and presentation remain caller-owned.
 
+`CompiledFrame::execute_profiled` reports CPU command-encoding and
+`Queue::submit` durations separately, accumulated over all execution segments.
+`execute_with_gpu_timing_profiled` returns the same CPU sample together with the
+non-blocking GPU timestamp readback. The ordinary execute methods keep the same
+one-shot behavior and simply discard this host-side measurement.
+
 ## GPU timing
 
 GPU timing is opt-in and leaves the normal execution path allocation-free with
 respect to profiler resources. `execute_with_gpu_timing` uses timestamp writes
 only for retained render and compute passes and returns a one-shot,
-`#[must_use]` readback handle:
+`#[must_use]` readback handle. Retained render and compute passes require only
+`TIMESTAMP_QUERY`; when the device also enables the optional
+`TIMESTAMP_QUERY_INSIDE_ENCODERS` feature, retained copy and buffer-clear nodes
+are timed as well:
 
 ```rust,no_run
 # use zen_frame_graph::{CompileOptions, ExecutionOptions, FrameGraph};
@@ -151,6 +160,34 @@ FrameGraph access. A transient resource must instead be resolved from the
 current callback's typed token and must never be cached across callbacks or
 frames. When several renderer domains share one native resource, the frame
 composer should import it once and pass the same logical handle to each domain.
+
+Bindless sampled-texture tables use the same declaration rule without requiring
+thousands of per-pass texture accesses. Register the externally owned table once
+per frame, then declare one whole-table read in every pass that can index it:
+
+```rust
+# use zen_frame_graph::{CompileOptions, FrameGraph, TextureSetDesc};
+let mut graph = FrameGraph::new();
+let mut frame = graph.begin_frame();
+let textures = frame.import_texture_set(TextureSetDesc::new("resident textures", 4096))?;
+
+let mut pass = frame.compute_pass("material classify");
+pass.set_side_effect(true);
+let _textures = pass.bindless_texture_set(textures)?;
+pass.finish()?;
+
+let compiled = frame.compile(CompileOptions::full_report())?;
+# Ok::<(), zen_frame_graph::FrameGraphError>(())
+```
+
+A texture set is an imported, initially defined, read-only logical resource.
+The compiler validates its access role and tracks one whole-resource lifetime;
+it never allocates or requests a native `wgpu::Texture` binding for the set.
+The renderer keeps the corresponding bind group alive and captures it in its
+execution callbacks. Set membership is immutable for the duration of a recorded
+frame; bind-group epoch changes belong at frame boundaries. Individual members
+that are also written by the FrameGraph still require their normal texture
+access declarations—the opaque set does not manufacture member-level hazards.
 
 ## Minimal example
 

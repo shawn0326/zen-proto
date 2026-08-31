@@ -292,6 +292,86 @@ mod tests {
         WriteContents,
     };
 
+    fn proportional_source_interval(
+        source_size: usize,
+        destination_size: usize,
+        destination: usize,
+    ) -> std::ops::Range<usize> {
+        destination * source_size / destination_size
+            ..((destination + 1) * source_size).div_ceil(destination_size)
+    }
+
+    #[test]
+    fn non_power_of_two_reduction_conservatively_covers_every_source_texel() {
+        for source_size in 1..=257 {
+            let destination_size = (source_size / 2).max(1);
+            let mut visits = vec![0_u8; source_size];
+            for destination in 0..destination_size {
+                let interval =
+                    proportional_source_interval(source_size, destination_size, destination);
+                assert!((1..=3).contains(&interval.len()));
+                for source in interval {
+                    visits[source] += 1;
+                }
+            }
+            assert!(visits.into_iter().all(|visits| (1..=2).contains(&visits)));
+        }
+
+        assert_eq!(proportional_source_interval(13, 6, 5), 10..13);
+    }
+
+    #[test]
+    fn proportional_max_chain_retains_the_global_farthest_depth() {
+        let mut level = (0..13)
+            .map(|index| {
+                if index == 12 {
+                    0.9375
+                } else {
+                    index as f32 / 100.0
+                }
+            })
+            .collect::<Vec<_>>();
+        while level.len() > 1 {
+            let destination_size = (level.len() / 2).max(1);
+            level = (0..destination_size)
+                .map(|destination| {
+                    proportional_source_interval(level.len(), destination_size, destination)
+                        .map(|source| level[source])
+                        .fold(0.0_f32, f32::max)
+                })
+                .collect();
+        }
+        assert_eq!(level, [0.9375]);
+    }
+
+    #[test]
+    fn non_power_of_two_chain_covers_each_normalized_query_footprint() {
+        for source_size in 1..=257_usize {
+            let mut coverage = (0..source_size)
+                .map(|source| vec![source])
+                .collect::<Vec<_>>();
+            while coverage.len() > 1 {
+                let destination_size = (coverage.len() / 2).max(1);
+                let previous = coverage;
+                coverage = (0..destination_size)
+                    .map(|destination| {
+                        proportional_source_interval(previous.len(), destination_size, destination)
+                            .flat_map(|source| previous[source].iter().copied())
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+                for (destination, sources) in coverage.iter().enumerate() {
+                    let expected_begin = destination * source_size / destination_size;
+                    let expected_end = ((destination + 1) * source_size).div_ceil(destination_size);
+                    assert!(
+                        (expected_begin..expected_end)
+                            .all(|source| sources.binary_search(&source).is_ok())
+                    );
+                }
+            }
+        }
+    }
+
     fn execute_pyramid(
         graph: &mut FrameGraph,
         queue: &wgpu::Queue,

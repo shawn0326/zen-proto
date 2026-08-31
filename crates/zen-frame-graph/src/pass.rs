@@ -3,8 +3,8 @@ use core::marker::PhantomData;
 use crate::{
     AccessId, AccessMode, AccessRole, AttachmentStoreOp, Buffer, BufferRange,
     BufferTextureCopyLocation, ColorAttachmentOps, DepthAttachmentOps, Frame, FrameGraphError,
-    NodeKind, PassId, ResourceId, TextureCopyLocation, TextureSubresourceRange, TextureTarget,
-    WriteContents,
+    NodeKind, PassId, ResourceId, TextureCopyLocation, TextureSet, TextureSubresourceRange,
+    TextureTarget, WriteContents,
     execution::{
         CopyOperation, RenderColorAttachment, RenderDepthAttachment, TextureCopyLocationRecord,
     },
@@ -47,6 +47,7 @@ define_marker!(
     IndirectBuffer,
     BufferCopySrc,
     BufferCopyDst,
+    BindlessTextureSet,
 );
 
 macro_rules! impl_buffer_marker {
@@ -161,6 +162,34 @@ impl<'a, 'frame> PassBuilder<'a, 'frame> {
             AccessMode::Read,
             true,
             false,
+        )
+    }
+
+    /// Declares a read of an entire externally owned bindless texture table.
+    ///
+    /// The access participates in validation and lifetime reporting but does
+    /// not materialize a native resource. The execution callback should use
+    /// the caller-owned bind group captured by the renderer.
+    pub fn bindless_texture_set(
+        &mut self,
+        texture_set: TextureSet<'frame>,
+    ) -> Result<AccessToken<'frame, BindlessTextureSet>, FrameGraphError> {
+        self.frame
+            .validate_handle(texture_set.owner, texture_set.recording)?;
+        self.frame
+            .resource(texture_set.id)?
+            .texture_set()
+            .ok_or_else(|| FrameGraphError::Internal {
+                message: "texture-set handle resolved to another resource kind".into(),
+            })?;
+        self.add_access(
+            texture_set.id,
+            AccessRole::BindlessTextureSet,
+            AccessMode::Read,
+            true,
+            false,
+            NormalizedRange::TextureSet,
+            None,
         )
     }
 
@@ -753,7 +782,7 @@ impl<'a, 'frame> PassBuilder<'a, 'frame> {
         let desc = self.frame.resource(resource)?.texture().expect("texture");
         let regions = match &mut range {
             NormalizedRange::Texture(regions) => regions,
-            NormalizedRange::Buffer(_) => unreachable!(),
+            NormalizedRange::Buffer(_) | NormalizedRange::TextureSet => unreachable!(),
         };
         if regions.is_empty() {
             return Err(FrameGraphError::InvalidTextureView {
@@ -853,7 +882,7 @@ impl<'a, 'frame> PassBuilder<'a, 'frame> {
         ) {
             let regions = match &mut range {
                 NormalizedRange::Texture(regions) => regions,
-                NormalizedRange::Buffer(_) => unreachable!(),
+                NormalizedRange::Buffer(_) | NormalizedRange::TextureSet => unreachable!(),
             };
             if !direct_texture && regions.len() != 1 {
                 return Err(FrameGraphError::InvalidTextureView {

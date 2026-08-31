@@ -2,23 +2,23 @@ use std::time::Duration;
 
 use crate::{
     AccessId, AccessMode, AccessReport, AccessRole, AllocationId, AllocationReport, BufferDesc,
-    BufferRange, CompilationReport, CulledNodeReason, CulledNodeReport, DebugGroupId,
-    DebugGroupReport, DependencyKind, DependencyReport, Diagnostic, DiagnosticSeverity,
-    ExecutionSegmentKind, ExecutionSegmentReport, FullCompilationReport, GpuTimingNodeKind,
-    GpuTimingNodeReport, GpuTimingReport, HazardKind, NodeKind, NodeReport, PassId,
-    ResourceDescriptor, ResourceId, ResourceKind, ResourceLifetime, ResourceOrigin,
-    ResourcePoolStats, ResourceRange, ResourceReport, ResourceUsage, RootReason, RootReport,
-    TextureDesc, TextureSubresourceRange, TextureViewDesc, UsagePolicy, ValueId, ViewId,
-    ViewReport,
+    BufferRange, CompilationReport, CompileOptions, CulledNodeReason, CulledNodeReport,
+    DebugGroupId, DebugGroupReport, DependencyKind, DependencyReport, Diagnostic,
+    DiagnosticSeverity, ExecutionSegmentKind, ExecutionSegmentReport, FrameGraph,
+    FullCompilationReport, GpuTimingNodeKind, GpuTimingNodeReport, GpuTimingReport, HazardKind,
+    NodeKind, NodeReport, PassId, ResourceDescriptor, ResourceId, ResourceKind, ResourceLifetime,
+    ResourceOrigin, ResourcePoolStats, ResourceRange, ResourceReport, ResourceUsage, RootReason,
+    RootReport, TextureDesc, TextureSetDesc, TextureSubresourceRange, TextureViewDesc, UsagePolicy,
+    ValueId, ViewId, ViewReport,
 };
 
 use super::{
     CreateFrameGraphSnapshotOptions, SnapshotAccessKind, SnapshotAccessMode,
     SnapshotAllocationReport, SnapshotDependencyKind, SnapshotDiagnosticSeverity,
     SnapshotExportError, SnapshotGpuTimings, SnapshotNodeCompileState, SnapshotNodeKind,
-    SnapshotPoolReport, SnapshotResourceKind, SnapshotResourceOrigin, SnapshotRootReason,
-    SnapshotSegmentKind, SnapshotUsageFlag, SnapshotWriteContents, create_frame_graph_snapshot,
-    to_json_pretty,
+    SnapshotPoolReport, SnapshotResourceDescriptor, SnapshotResourceKind, SnapshotResourceOrigin,
+    SnapshotRootReason, SnapshotSegmentKind, SnapshotUsageFlag, SnapshotWriteContents,
+    create_frame_graph_snapshot, to_json_pretty,
 };
 
 #[test]
@@ -103,6 +103,44 @@ fn golden_snapshot_covers_v1_wire_mapping() {
         json.trim_end(),
         include_str!("../../tests/fixtures/snapshot-v1.json").trim_end()
     );
+}
+
+#[test]
+fn bindless_texture_set_exports_as_one_opaque_resource_and_access() {
+    let mut graph = FrameGraph::new();
+    let mut frame = graph.begin_frame();
+    let set = frame
+        .import_texture_set(TextureSetDesc::new("resident-textures", 4096))
+        .unwrap();
+    let mut pass = frame.compute_pass("shade");
+    pass.set_side_effect(true);
+    let _set = pass.bindless_texture_set(set).unwrap();
+    pass.finish().unwrap();
+    let compiled = frame.compile(CompileOptions::full_report()).unwrap();
+    let snapshot = create_frame_graph_snapshot(
+        compiled.report().unwrap(),
+        CreateFrameGraphSnapshotOptions::new(3),
+    )
+    .unwrap();
+
+    assert_eq!(snapshot.graph.resources.len(), 1);
+    assert_eq!(
+        snapshot.graph.resources[0].kind,
+        SnapshotResourceKind::TextureSet
+    );
+    assert_eq!(
+        snapshot.graph.resources[0].descriptor,
+        SnapshotResourceDescriptor::TextureSet {
+            texture_count: 4096,
+        }
+    );
+    assert_eq!(snapshot.graph.accesses.len(), 1);
+    assert_eq!(
+        snapshot.graph.accesses[0].access,
+        SnapshotAccessKind::BindlessTextureSet
+    );
+    assert!(snapshot.graph.accesses[0].texture_region.is_none());
+    assert!(snapshot.graph.accesses[0].buffer_range.is_none());
 }
 
 #[test]
@@ -241,8 +279,12 @@ fn all_v1_enum_spellings_are_locked() {
         ],
     );
     assert_json_strings(
-        &[SnapshotResourceKind::Texture, SnapshotResourceKind::Buffer],
-        &["texture", "buffer"],
+        &[
+            SnapshotResourceKind::Texture,
+            SnapshotResourceKind::Buffer,
+            SnapshotResourceKind::TextureSet,
+        ],
+        &["texture", "buffer", "texture-set"],
     );
     assert_json_strings(
         &[
@@ -302,6 +344,7 @@ fn all_v1_enum_spellings_are_locked() {
             SnapshotAccessKind::BufferIndirect,
             SnapshotAccessKind::BufferCopySrc,
             SnapshotAccessKind::BufferCopyDst,
+            SnapshotAccessKind::BindlessTextureSet,
         ],
         &[
             "texture-sampled",
@@ -320,6 +363,7 @@ fn all_v1_enum_spellings_are_locked() {
             "buffer-indirect",
             "buffer-copy-src",
             "buffer-copy-dst",
+            "bindless-texture-set",
         ],
     );
     assert_json_strings(

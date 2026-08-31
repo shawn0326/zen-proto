@@ -4,6 +4,8 @@ use zen_render_mesh::{Instance, Material, Mesh, Texture, Vertex};
 
 pub struct LoadedGltfModel {
     pub meshes: Vec<Mesh>,
+    /// Surface semantics aligned one-to-one with `meshes`.
+    pub mesh_surfaces: Vec<LoadedMeshSurface>,
     pub materials: Vec<Material>,
     pub instances: Vec<Instance>,
     pub textures: Vec<Texture>,
@@ -15,6 +17,19 @@ pub struct LoadGltfOptions {
     pub flip_v: bool,
     /// Bake node transforms into vertex positions/normals and emit identity instances.
     pub bake_node_transform: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LoadedAlphaMode {
+    Opaque,
+    Mask,
+    Blend,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LoadedMeshSurface {
+    pub alpha_mode: LoadedAlphaMode,
+    pub double_sided: bool,
 }
 
 impl Default for LoadGltfOptions {
@@ -113,8 +128,7 @@ pub fn load_gltf(path: impl AsRef<Path>, options: LoadGltfOptions) -> LoadedGltf
         id
     };
 
-    let mut meshes: Vec<Mesh> = Vec::new();
-    let mut instances: Vec<Instance> = Vec::new();
+    let mut loaded = LoadedSceneOutput::default();
 
     let scale_m = glam::Mat4::from_scale(glam::Vec3::splat(options.global_scale));
     for node in scene.nodes() {
@@ -124,17 +138,24 @@ pub fn load_gltf(path: impl AsRef<Path>, options: LoadGltfOptions) -> LoadedGltf
             options,
             &buffers,
             default_material_id,
-            &mut meshes,
-            &mut instances,
+            &mut loaded,
         );
     }
 
     LoadedGltfModel {
-        meshes,
+        meshes: loaded.meshes,
+        mesh_surfaces: loaded.mesh_surfaces,
         materials,
-        instances,
+        instances: loaded.instances,
         textures,
     }
+}
+
+#[derive(Default)]
+struct LoadedSceneOutput {
+    meshes: Vec<Mesh>,
+    mesh_surfaces: Vec<LoadedMeshSurface>,
+    instances: Vec<Instance>,
 }
 
 fn load_node_recursive(
@@ -143,8 +164,7 @@ fn load_node_recursive(
     options: LoadGltfOptions,
     buffers: &[gltf::buffer::Data],
     default_material_id: u32,
-    meshes_out: &mut Vec<Mesh>,
-    instances_out: &mut Vec<Instance>,
+    loaded: &mut LoadedSceneOutput,
 ) {
     let local = mat4_from_gltf(node.transform().matrix());
     let world = *parent_world * local;
@@ -163,10 +183,20 @@ fn load_node_recursive(
                 .index()
                 .map(|i| i as u32)
                 .unwrap_or(default_material_id);
+            let material = primitive.material();
+            let alpha_mode = match material.alpha_mode() {
+                gltf::material::AlphaMode::Opaque => LoadedAlphaMode::Opaque,
+                gltf::material::AlphaMode::Mask => LoadedAlphaMode::Mask,
+                gltf::material::AlphaMode::Blend => LoadedAlphaMode::Blend,
+            };
 
             let engine_mesh = build_engine_mesh_from_primitive(&primitive, buffers, world, options);
-            let mesh_id = meshes_out.len() as u32;
-            meshes_out.push(engine_mesh);
+            let mesh_id = loaded.meshes.len() as u32;
+            loaded.meshes.push(engine_mesh);
+            loaded.mesh_surfaces.push(LoadedMeshSurface {
+                alpha_mode,
+                double_sided: material.double_sided(),
+            });
 
             // Emit identity instance if we baked, otherwise keep node transform.
             let transform = if options.bake_node_transform {
@@ -174,7 +204,7 @@ fn load_node_recursive(
             } else {
                 world
             };
-            instances_out.push(Instance {
+            loaded.instances.push(Instance {
                 transform,
                 mesh_id,
                 material_id,
@@ -190,8 +220,7 @@ fn load_node_recursive(
             options,
             buffers,
             default_material_id,
-            meshes_out,
-            instances_out,
+            loaded,
         );
     }
 }

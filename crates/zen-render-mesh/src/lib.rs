@@ -6,11 +6,25 @@
 
 pub mod camera;
 pub mod mesh;
+pub mod meshlet;
 
 pub use camera::{Camera, OrthographicProjection, PerspectiveProjection};
 pub use mesh::{
     Instance, Material, Mesh, MeshRenderInput, MeshRenderStats, MeshRenderTargets, MeshRenderer,
     PreparedMeshFrame, Texture, Vertex,
+};
+pub use meshlet::{
+    BindlessTextureError, BoundsSphere, FallbackTextureHandles, LodTableEntry, MeshTableEntry,
+    MeshletAssetError, MeshletAssetHash, MeshletBackend, MeshletBenchmarkProfile,
+    MeshletBindlessCapacity, MeshletBindlessConfig, MeshletBuildConfig, MeshletCacheKey,
+    MeshletCapabilities, MeshletCapabilityError, MeshletCapacityConfig, MeshletCapacityKind,
+    MeshletConfigError, MeshletDeviceRequirements, MeshletDriverBlacklist,
+    MeshletDriverBlacklistEntry, MeshletDriverKey, MeshletGpuFrameTimings, MeshletGpuPassTimings,
+    MeshletGpuTimingError, MeshletLimitFailure, MeshletOverflowFlags, MeshletPsoBinStats,
+    MeshletPsoClass, MeshletRenderInput, MeshletRenderStats, MeshletRenderer,
+    MeshletRendererConfig, MeshletRendererError, MeshletSceneAsset, MeshletTableEntry, NormalCone,
+    PackedVertexAttributes, ParseMeshletBackendError, PreparedMeshletFrame, RawStaticMesh,
+    TextureHandle,
 };
 
 #[cfg(test)]

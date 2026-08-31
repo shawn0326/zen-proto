@@ -173,7 +173,9 @@ impl Example for Demo {
         self.camera.set_view(self.camera_controller.view_matrix());
     }
 
-    fn frame_graph_snapshot_source(&mut self) -> Option<&mut ForwardRenderHost> {
+    fn frame_graph_snapshot_source(
+        &mut self,
+    ) -> Option<&mut dyn zen_demo::FrameGraphSnapshotSource> {
         Some(&mut self.render_host)
     }
 }

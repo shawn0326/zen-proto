@@ -138,6 +138,7 @@ pub struct SnapshotResource {
 pub enum SnapshotResourceKind {
     Texture,
     Buffer,
+    TextureSet,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -171,6 +172,10 @@ pub enum SnapshotResourceDescriptor {
     },
     Buffer {
         size: u64,
+    },
+    TextureSet {
+        #[serde(rename = "textureCount")]
+        texture_count: u64,
     },
 }
 
@@ -255,6 +260,7 @@ pub enum SnapshotAccessKind {
     BufferIndirect,
     BufferCopySrc,
     BufferCopyDst,
+    BindlessTextureSet,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]

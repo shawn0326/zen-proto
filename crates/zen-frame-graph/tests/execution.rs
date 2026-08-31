@@ -7,9 +7,36 @@ use zen_frame_graph::{
     BufferDesc, BufferRange, BufferTextureCopyLocation, ColorAttachmentOps, CompileOptions,
     DepthAttachmentOps, ExecutionOptions, FrameGraph, FrameGraphError, GpuTimingNodeKind,
     GpuTimingReport, GpuTimingUnavailableReason, ImportBufferOptions, ImportTextureOptions,
-    InitialContents, RootReason, TextureCopyLocation, TextureDesc, TextureViewDesc, UsagePolicy,
-    WriteContents,
+    InitialContents, RootReason, TextureCopyLocation, TextureDesc, TextureSetDesc, TextureViewDesc,
+    UsagePolicy, WriteContents,
 };
+
+#[test]
+fn executes_bindless_texture_set_reads_without_a_native_resource_binding() {
+    let (device, queue) = noop_device();
+    let called = Arc::new(AtomicUsize::new(0));
+    let mut graph = FrameGraph::with_device(&device);
+    let mut frame = graph.begin_frame();
+    let set = frame
+        .import_texture_set(TextureSetDesc::new("resident-textures", 64))
+        .unwrap();
+
+    let callback_called = called.clone();
+    let mut pass = frame.command_pass("bind bindless table");
+    let _set_read = pass.bindless_texture_set(set).unwrap();
+    pass.finish_command(move |_| {
+        callback_called.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    })
+    .unwrap();
+
+    frame
+        .compile(CompileOptions::default())
+        .unwrap()
+        .execute(&queue)
+        .unwrap();
+    assert_eq!(called.load(Ordering::Relaxed), 1);
+}
 
 fn noop_device() -> (wgpu::Device, wgpu::Queue) {
     wgpu::Device::noop(&wgpu::DeviceDescriptor::default())
@@ -18,6 +45,14 @@ fn noop_device() -> (wgpu::Device, wgpu::Queue) {
 fn timestamp_device() -> (wgpu::Device, wgpu::Queue) {
     wgpu::Device::noop(&wgpu::DeviceDescriptor {
         required_features: wgpu::Features::TIMESTAMP_QUERY,
+        ..Default::default()
+    })
+}
+
+fn encoder_timestamp_device() -> (wgpu::Device, wgpu::Queue) {
+    wgpu::Device::noop(&wgpu::DeviceDescriptor {
+        required_features: wgpu::Features::TIMESTAMP_QUERY
+            | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS,
         ..Default::default()
     })
 }
@@ -127,6 +162,9 @@ fn gpu_debug_groups_survive_nested_paths_and_external_boundaries() {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let mut graph = FrameGraph::with_device(&device);
     let mut frame = graph.begin_frame();
+    // The compiler drops this empty first group from its runtime sidecar. Retained group IDs are
+    // therefore intentionally non-contiguous and must not be used as compact Vec indices.
+    frame.with_debug_group("Unused", |_| Ok(())).unwrap();
     frame
         .with_debug_group("Mesh", |frame| {
             let first_calls = calls.clone();
@@ -1163,6 +1201,52 @@ fn timed_execution_reports_only_retained_render_and_compute_nodes() {
     );
     assert_eq!(debug_groups.len(), 1);
     assert_eq!(debug_groups[0].label, "Mesh");
+}
+
+#[test]
+fn encoder_timestamps_measure_retained_clear_and_copy_nodes_when_enabled() {
+    let (device, queue) = encoder_timestamp_device();
+    let mut graph = FrameGraph::with_device(&device);
+    let mut frame = graph.begin_frame();
+    let source = frame
+        .create_buffer(BufferDesc::new("timed-source", 16))
+        .unwrap();
+    let destination = frame
+        .create_buffer(BufferDesc::new("timed-destination", 16))
+        .unwrap();
+    frame
+        .clear_buffer("timed-clear", source, BufferRange::whole())
+        .unwrap();
+    let mut copy = frame.copy_pass("timed-copy");
+    copy.copy_buffer_to_buffer(source, 0, destination, 0, 16)
+        .unwrap();
+    copy.finish().unwrap();
+    frame
+        .mark_buffer_root(destination, BufferRange::whole(), RootReason::Output)
+        .unwrap();
+
+    let mut readback = frame
+        .compile(CompileOptions::default())
+        .unwrap()
+        .execute_with_gpu_timing(&queue, ExecutionOptions::default().with_frame_index(43))
+        .unwrap();
+    let GpuTimingReport::Available {
+        frame_index, nodes, ..
+    } = take_timing(&mut readback)
+    else {
+        panic!("expected available timestamps")
+    };
+    assert_eq!(frame_index, 43);
+    assert_eq!(
+        nodes
+            .iter()
+            .map(|node| (node.label.as_str(), node.kind))
+            .collect::<Vec<_>>(),
+        [
+            ("timed-clear", GpuTimingNodeKind::ClearBuffer),
+            ("timed-copy", GpuTimingNodeKind::Copy),
+        ]
+    );
 }
 
 #[test]

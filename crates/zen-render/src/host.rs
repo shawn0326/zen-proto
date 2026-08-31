@@ -7,8 +7,8 @@ use zen_frame_graph::snapshot::{
 #[cfg(feature = "snapshot")]
 use zen_frame_graph::{CompilationReport, ResourcePoolStats};
 use zen_frame_graph::{
-    CompileOptions, ExecutionOptions, Frame, FrameGraph, FrameGraphError, GpuTimingReadback,
-    GpuTimingReport, TextureDesc, UsagePolicy,
+    CompileOptions, ExecutionCpuTimings, ExecutionOptions, Frame, FrameGraph, FrameGraphError,
+    GpuTimingReadback, GpuTimingReport, TextureDesc, UsagePolicy,
 };
 
 /// Domain-independent owner of FrameGraph recording, compilation, execution,
@@ -19,6 +19,7 @@ pub struct RenderHost<C> {
     last_surface_extent: Option<(u32, u32)>,
     gpu_debug_groups_enabled: bool,
     gpu_timing: GpuTimingRequestState,
+    cpu_timings: Option<ExecutionCpuTimings>,
     #[cfg(feature = "snapshot")]
     snapshot: FrameGraphSnapshotRequestState,
 }
@@ -32,6 +33,14 @@ struct GpuTimingRequestState {
 impl GpuTimingRequestState {
     fn request(&mut self) {
         self.requested = true;
+    }
+
+    fn try_request(&mut self) -> bool {
+        if self.requested || self.readback.is_some() {
+            return false;
+        }
+        self.requested = true;
+        true
     }
 
     fn should_execute(&self) -> bool {
@@ -114,6 +123,7 @@ impl<C: FrameComposer> RenderHost<C> {
             last_surface_extent: None,
             gpu_debug_groups_enabled: false,
             gpu_timing: GpuTimingRequestState::default(),
+            cpu_timings: None,
             #[cfg(feature = "snapshot")]
             snapshot: FrameGraphSnapshotRequestState::default(),
         }
@@ -136,9 +146,22 @@ impl<C: FrameComposer> RenderHost<C> {
         self.gpu_timing.request();
     }
 
+    /// Attempts to reserve the next frame for timing without coalescing behind an in-flight
+    /// readback. This is the handshake primitive for pairing timestamps with another one-shot
+    /// frame resource such as an asynchronous counter copy.
+    #[must_use]
+    pub fn try_request_gpu_timing(&mut self) -> bool {
+        self.gpu_timing.try_request()
+    }
+
     /// Non-blockingly polls and takes the current GPU timing result.
     pub fn take_gpu_timing(&mut self) -> Option<GpuTimingReport> {
         self.gpu_timing.take()
+    }
+
+    /// Takes the CPU command-encoding and queue-submit timing for the last successful frame.
+    pub fn take_cpu_timings(&mut self) -> Option<ExecutionCpuTimings> {
+        self.cpu_timings.take()
     }
 
     /// Requests a Snapshot 1.0 object from the next eligible successful frame.
@@ -162,6 +185,7 @@ impl<C: FrameComposer> RenderHost<C> {
         queue: &wgpu::Queue,
         input: RenderFrameInput<'a, C::FrameInput<'a>>,
     ) -> Result<(), FrameGraphError> {
+        self.cpu_timings = None;
         let surface_extent =
             validate_present_texture(input.surface_texture, self.composer.present_format())?;
         let extent = (surface_extent.width, surface_extent.height);
@@ -181,9 +205,10 @@ impl<C: FrameComposer> RenderHost<C> {
         );
 
         match result {
-            Ok(()) => {
+            Ok(cpu_timings) => {
                 self.composer.after_submit(device, prepared);
                 self.last_surface_extent = Some(extent);
+                self.cpu_timings = Some(cpu_timings);
                 Ok(())
             }
             Err(error) => {
@@ -200,7 +225,7 @@ impl<C: FrameComposer> RenderHost<C> {
         surface_texture: &wgpu::Texture,
         extent: wgpu::Extent3d,
         prepared: &C::PreparedFrame,
-    ) -> Result<(), FrameGraphError> {
+    ) -> Result<ExecutionCpuTimings, FrameGraphError> {
         let mut frame = self.frame_graph.begin_frame();
         let present_target = frame.with_debug_group("Frame Targets", |frame| {
             register_present_target(frame, surface_texture)
@@ -215,7 +240,7 @@ impl<C: FrameComposer> RenderHost<C> {
             .with_frame_index(frame_index);
 
         #[cfg(feature = "snapshot")]
-        {
+        let cpu_timings = {
             let should_snapshot = self
                 .snapshot
                 .should_execute(self.gpu_timing.readback.is_some());
@@ -229,30 +254,36 @@ impl<C: FrameComposer> RenderHost<C> {
                 let report = compiled
                     .take_report()
                     .expect("full report requested for snapshot capture");
-                let readback = compiled.execute_with_gpu_timing(queue, execution_options)?;
+                let (readback, cpu_timings) =
+                    compiled.execute_with_gpu_timing_profiled(queue, execution_options)?;
                 let pool_stats = self.frame_graph.resource_pool_stats();
                 self.snapshot
                     .commit(frame_index, report, pool_stats, readback);
+                cpu_timings
             } else if self.gpu_timing.should_execute() {
-                let readback = compiled.execute_with_gpu_timing(queue, execution_options)?;
+                let (readback, cpu_timings) =
+                    compiled.execute_with_gpu_timing_profiled(queue, execution_options)?;
                 self.gpu_timing.commit(readback);
+                cpu_timings
             } else {
-                compiled.execute_with_options(queue, execution_options)?;
+                compiled.execute_profiled(queue, execution_options)?
             }
-        }
+        };
 
         #[cfg(not(feature = "snapshot"))]
-        {
+        let cpu_timings = {
             let compiled = frame.compile(CompileOptions::default())?;
             if self.gpu_timing.should_execute() {
-                let readback = compiled.execute_with_gpu_timing(queue, execution_options)?;
+                let (readback, cpu_timings) =
+                    compiled.execute_with_gpu_timing_profiled(queue, execution_options)?;
                 self.gpu_timing.commit(readback);
+                cpu_timings
             } else {
-                compiled.execute_with_options(queue, execution_options)?;
+                compiled.execute_profiled(queue, execution_options)?
             }
-        }
+        };
 
-        Ok(())
+        Ok(cpu_timings)
     }
 }
 
@@ -436,6 +467,9 @@ mod tests {
 
         host.render_frame(&device, &queue, RenderFrameInput::new(7, &surface, 41))
             .unwrap();
+
+        assert!(host.take_cpu_timings().is_some());
+        assert!(host.take_cpu_timings().is_none());
 
         let composer = host.composer();
         assert_eq!(composer.prepare_count, 1);

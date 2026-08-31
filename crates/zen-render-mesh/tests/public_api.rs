@@ -1,6 +1,9 @@
 use zen_render_mesh::{
     Camera, Instance, Material, Mesh, MeshRenderInput, MeshRenderStats, MeshRenderTargets,
-    MeshRenderer, PerspectiveProjection, PreparedMeshFrame, Texture, Vertex,
+    MeshRenderer, MeshletBackend, MeshletBuildConfig, MeshletCapabilities,
+    MeshletDeviceRequirements, MeshletRenderInput, MeshletRenderStats, MeshletRenderer,
+    MeshletRendererConfig, MeshletSceneAsset, PerspectiveProjection, PreparedMeshFrame,
+    PreparedMeshletFrame, Texture, Vertex,
 };
 
 #[test]
@@ -34,4 +37,43 @@ fn mesh_domain_public_api_paths_compile() {
     let _ = MeshRenderer::request_stats;
     let _ = MeshRenderer::take_stats;
     let _ = MeshRenderTargets::new;
+}
+
+#[test]
+fn meshlet_domain_public_api_paths_compile() {
+    fn accept_renderer(_: Option<MeshletRenderer>) {}
+    fn accept_input(_: Option<MeshletRenderInput>) {}
+    fn accept_prepared(_: Option<PreparedMeshletFrame>) {}
+    fn accept_stats(_: Option<MeshletRenderStats>) {}
+    fn accept_requirements(_: Option<MeshletDeviceRequirements>) {}
+
+    accept_renderer(None);
+    accept_input(None);
+    accept_prepared(None);
+    accept_stats(None);
+    accept_requirements(None);
+
+    let _ = std::mem::size_of::<MeshletRendererConfig>();
+    let _ = std::mem::size_of::<MeshletBuildConfig>();
+    let _ = std::mem::size_of::<MeshletCapabilities>();
+    let _ = std::mem::size_of::<MeshletSceneAsset>();
+    let _ = [
+        MeshletBackend::Auto,
+        MeshletBackend::IndexedIndirect,
+        MeshletBackend::MeshOnly,
+        MeshletBackend::TaskMesh,
+    ];
+    let _ = MeshletRenderer::new;
+    let _ = MeshletRenderer::prepare_frame;
+    let _ = MeshletRenderer::record_frame_graph;
+    let _ = MeshletRenderer::after_submit;
+    let _ = MeshletRenderer::after_discard;
+    let _ = MeshletRenderer::request_stats;
+    let _ = MeshletRenderer::take_stats;
+    let _ = MeshletCapabilities::from_adapter;
+    let _ = MeshletCapabilities::resolve_backend;
+    let _ = MeshletCapabilities::device_requirements;
+    let _ = MeshletSceneAsset::build;
+    let _ = MeshletSceneAsset::encode_zenmesh;
+    let _ = MeshletSceneAsset::decode_zenmesh;
 }

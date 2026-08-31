@@ -28,10 +28,10 @@ pub use gpu_timing::{
 pub use graph::{Frame, FrameGraph};
 pub use ids::{AccessId, AllocationId, DebugGroupId, PassId, ResourceId, ValueId, ViewId};
 pub use pass::{
-    AccessMarker, AccessToken, BufferAccessMarker, BufferCopyDst, BufferCopySrc, ColorAttachment,
-    DepthAttachment, IndexBuffer, IndirectBuffer, PassBuilder, SampledTexture, StorageBufferRead,
-    StorageBufferWrite, StorageTextureRead, StorageTextureWrite, TextureAccessMarker,
-    TextureCopyDst, TextureCopySrc, UniformBuffer, VertexBuffer,
+    AccessMarker, AccessToken, BindlessTextureSet, BufferAccessMarker, BufferCopyDst,
+    BufferCopySrc, ColorAttachment, DepthAttachment, IndexBuffer, IndirectBuffer, PassBuilder,
+    SampledTexture, StorageBufferRead, StorageBufferWrite, StorageTextureRead, StorageTextureWrite,
+    TextureAccessMarker, TextureCopyDst, TextureCopySrc, UniformBuffer, VertexBuffer,
 };
 pub use report::{
     AccessReport, AllocationReport, CompilationReport, CompilationSummary, CompilationTimings,
@@ -43,13 +43,13 @@ pub use report::{
 pub use resource::{
     Buffer, BufferDesc, BufferRange, BufferTextureCopyLocation, ClearBufferOp, ImportBufferOptions,
     ImportTextureOptions, InitialContents, NormalizedTextureViewDesc, ResourceOrigin, Texture,
-    TextureCopyLocation, TextureDesc, TextureSubresourceRange, TextureTarget, TextureView,
-    TextureViewDesc, UsagePolicy,
+    TextureCopyLocation, TextureDesc, TextureSet, TextureSetDesc, TextureSubresourceRange,
+    TextureTarget, TextureView, TextureViewDesc, UsagePolicy,
 };
 pub use resource_pool::ResourcePoolStats;
 pub use types::{
     AccessMode, AccessRole, AttachmentStoreOp, ColorAttachmentLoadOp, ColorAttachmentOps,
-    CompileOptions, DependencyKind, DepthAttachmentLoadOp, DepthAttachmentOps, ExecutionOptions,
-    HazardKind, NodeKind, ReportLevel, ResourceKind, ResourceRange, RootReason, UndefinedCause,
-    WriteContents,
+    CompileOptions, DependencyKind, DepthAttachmentLoadOp, DepthAttachmentOps, ExecutionCpuTimings,
+    ExecutionOptions, HazardKind, NodeKind, ReportLevel, ResourceKind, ResourceRange, RootReason,
+    UndefinedCause, WriteContents,
 };

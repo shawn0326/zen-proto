@@ -12,6 +12,10 @@ use crate::{DebugGroupId, DebugGroupReport, NodeKind, PassId, model::NodeRecord}
 pub enum GpuTimingNodeKind {
     Render,
     Compute,
+    /// A copy pass timed with command-encoder timestamp writes.
+    Copy,
+    /// A buffer-clear pass timed with command-encoder timestamp writes.
+    ClearBuffer,
 }
 
 /// GPU duration for one retained render or compute pass.
@@ -192,7 +196,10 @@ impl GpuProfiler {
         nodes: &[NodeRecord],
         groups: &[crate::model::DebugGroupRecord],
     ) -> TimingSetup {
-        let timed_nodes = build_timed_nodes(nodes);
+        let encoder_timestamps = device
+            .features()
+            .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS);
+        let timed_nodes = build_timed_nodes(nodes, encoder_timestamps);
         if timed_nodes.is_empty() {
             return TimingSetup::Immediate(GpuTimingReadback::immediate(
                 device,
@@ -407,7 +414,7 @@ impl Drop for ActiveGpuTiming {
     }
 }
 
-fn build_timed_nodes(nodes: &[NodeRecord]) -> Vec<TimedNode> {
+fn build_timed_nodes(nodes: &[NodeRecord], encoder_timestamps: bool) -> Vec<TimedNode> {
     let mut next_query = 0u32;
     nodes
         .iter()
@@ -415,6 +422,8 @@ fn build_timed_nodes(nodes: &[NodeRecord]) -> Vec<TimedNode> {
             let kind = match node.kind {
                 NodeKind::Render => GpuTimingNodeKind::Render,
                 NodeKind::Compute => GpuTimingNodeKind::Compute,
+                NodeKind::Copy if encoder_timestamps => GpuTimingNodeKind::Copy,
+                NodeKind::ClearBuffer if encoder_timestamps => GpuTimingNodeKind::ClearBuffer,
                 _ => return None,
             };
             let begin_query = next_query;

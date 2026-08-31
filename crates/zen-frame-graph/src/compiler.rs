@@ -164,6 +164,15 @@ impl<'frame> CompiledFrame<'frame> {
         crate::execution::execute(self, queue, options)
     }
 
+    /// Executes this frame once and returns host encode/queue-submit durations.
+    pub fn execute_profiled(
+        self,
+        queue: &wgpu::Queue,
+        options: ExecutionOptions,
+    ) -> Result<crate::ExecutionCpuTimings, FrameGraphError> {
+        crate::execution::execute_profiled(self, queue, options)
+    }
+
     /// Executes this frame once and starts a non-blocking GPU timestamp readback.
     pub fn execute_with_gpu_timing(
         self,
@@ -171,6 +180,15 @@ impl<'frame> CompiledFrame<'frame> {
         options: ExecutionOptions,
     ) -> Result<crate::GpuTimingReadback, FrameGraphError> {
         crate::execution::execute_with_gpu_timing(self, queue, options)
+    }
+
+    /// Executes once and starts GPU timestamp readback while also returning CPU execution timing.
+    pub fn execute_with_gpu_timing_profiled(
+        self,
+        queue: &wgpu::Queue,
+        options: ExecutionOptions,
+    ) -> Result<(crate::GpuTimingReadback, crate::ExecutionCpuTimings), FrameGraphError> {
+        crate::execution::execute_with_gpu_timing_profiled(self, queue, options)
     }
 }
 
@@ -251,6 +269,7 @@ impl IntervalState {
 enum ResourceState {
     Buffer(IntervalState),
     Texture(BTreeMap<(u32, u8), IntervalState>),
+    TextureSet(IntervalState),
 }
 
 #[derive(Default)]
@@ -593,6 +612,7 @@ fn role_allowed_in_node(kind: NodeKind, role: AccessRole) -> bool {
                 | AccessRole::StorageBufferRead
                 | AccessRole::StorageBufferWrite
                 | AccessRole::IndirectBuffer
+                | AccessRole::BindlessTextureSet
         ),
         NodeKind::Copy => matches!(
             role,
@@ -655,6 +675,9 @@ fn initialize_states(
                     );
                 }
                 states.push(ResourceState::Texture(subresources));
+            }
+            ResourceDescriptor::TextureSet(_) => {
+                states.push(ResourceState::TextureSet(IntervalState::new(1, initial)));
             }
         }
     }
@@ -721,6 +744,9 @@ fn analyze_nodes(
                             analysis,
                         )?;
                     }
+                }
+                (NormalizedRange::TextureSet, ResourceState::TextureSet(state)) => {
+                    process_interval(state, 0..1, None, access, new_value, analysis)?;
                 }
                 _ => {
                     return Err(FrameGraphError::Internal {
@@ -917,6 +943,24 @@ fn analyze_roots(
                     )?;
                 }
             }
+            (NormalizedRange::TextureSet, ResourceState::TextureSet(state)) => {
+                let indices = state.prepare(0..1);
+                for segment in &state.segments[indices] {
+                    match segment.content {
+                        ContentState::Defined { producer, .. } => {
+                            if let Some(producer) = producer {
+                                producers.insert(producer);
+                            }
+                        }
+                        ContentState::Undefined(_) => {
+                            return Err(FrameGraphError::RootReferencesUndefinedContents {
+                                resource: root.resource,
+                                range: describe_range(&ResourceRange::TextureSet),
+                            });
+                        }
+                    }
+                }
+            }
             _ => {
                 return Err(FrameGraphError::Internal {
                     message: "root range kind mismatch".into(),
@@ -1067,6 +1111,9 @@ fn derive_usages(
                     });
                 }
                 result.insert(resource.id, ResourceUsage::Buffer(available));
+            }
+            ResourceDescriptor::TextureSet(_) => {
+                result.insert(resource.id, ResourceUsage::TextureSet);
             }
         }
     }
@@ -1422,6 +1469,7 @@ fn resource_estimated_bytes(resource: &ResourceRecord, _usage: ResourceUsage) ->
     match &resource.descriptor {
         ResourceDescriptor::Buffer(desc) => desc.size,
         ResourceDescriptor::Texture(desc) => estimate_texture_bytes(desc),
+        ResourceDescriptor::TextureSet(_) => 0,
     }
 }
 
@@ -1433,6 +1481,7 @@ fn full_resource_range(resource: &ResourceRecord) -> Result<ResourceRange, Frame
         ResourceDescriptor::Texture(desc) => {
             ResourceRange::Texture(crate::graph::full_texture_range(desc))
         }
+        ResourceDescriptor::TextureSet(_) => ResourceRange::TextureSet,
     })
 }
 
@@ -1448,10 +1497,13 @@ fn piece_range(
             slice_count: (end - start) as u32,
             ..*region
         }]),
-        None => {
-            debug_assert!(matches!(access.range, NormalizedRange::Buffer(_)));
-            ResourceRange::Buffer(crate::BufferRange::new(start, end - start))
-        }
+        None => match access.range {
+            NormalizedRange::Buffer(_) => {
+                ResourceRange::Buffer(crate::BufferRange::new(start, end - start))
+            }
+            NormalizedRange::TextureSet => ResourceRange::TextureSet,
+            NormalizedRange::Texture(_) => unreachable!("texture intervals include a region"),
+        },
     }
 }
 
@@ -1477,6 +1529,7 @@ fn describe_range(range: &ResourceRange) -> String {
             })
             .collect::<Vec<_>>()
             .join(", "),
+        ResourceRange::TextureSet => "entire bindless texture set".into(),
     }
 }
 

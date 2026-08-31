@@ -8,8 +8,8 @@ use crate::{
     Buffer, BufferDesc, BufferRange, ClearBufferOp, CompileOptions, CompiledFrame, DebugGroupId,
     FrameGraphError, ImportBufferOptions, ImportTextureOptions, InitialContents, NodeKind,
     NormalizedTextureViewDesc, PassBuilder, PassId, ResourceDescriptor, ResourceId, ResourceOrigin,
-    RootReason, Texture, TextureDesc, TextureSubresourceRange, TextureTarget, TextureView,
-    TextureViewDesc, ViewId, compiler,
+    RootReason, Texture, TextureDesc, TextureSet, TextureSetDesc, TextureSubresourceRange,
+    TextureTarget, TextureView, TextureViewDesc, ViewId, compiler,
     execution::{ClearBufferOperation, NativeResource, NodeExecutor},
     gpu_timing::GpuProfiler,
     model::{DebugGroupRecord, NormalizedRange, ResourceRecord, RootRecord, ViewRecord},
@@ -152,6 +152,38 @@ impl<'frame> Frame<'frame> {
             InitialContents::Undefined,
             exposed_usage,
         )
+    }
+
+    /// Registers one externally owned bindless texture table for this frame.
+    ///
+    /// The table and its bind group remain caller-owned. Passes can declare a
+    /// whole-table read with [`PassBuilder::bindless_texture_set`], avoiding a
+    /// per-pass declaration for every resident texture.
+    pub fn import_texture_set(
+        &mut self,
+        desc: TextureSetDesc,
+    ) -> Result<TextureSet<'frame>, FrameGraphError> {
+        if desc.texture_count == 0 {
+            return Err(FrameGraphError::InvalidResourceDescriptor {
+                message: "bindless texture sets must contain at least one texture slot".into(),
+            });
+        }
+        let id = self.next_resource_id()?;
+        self.resources.push(ResourceRecord {
+            id,
+            origin: ResourceOrigin::Imported,
+            initial_contents: InitialContents::Defined,
+            descriptor: ResourceDescriptor::TextureSet(desc),
+            exposed_texture_usage: None,
+            exposed_buffer_usage: None,
+            debug_group: self.current_debug_group(),
+        });
+        Ok(TextureSet {
+            id,
+            owner: self.owner,
+            recording: self.recording,
+            marker: PhantomData,
+        })
     }
 
     fn register_texture(
@@ -378,6 +410,19 @@ impl<'frame> Frame<'frame> {
             .buffer()
             .ok_or_else(|| FrameGraphError::Internal {
                 message: "buffer handle resolved to a texture".into(),
+            })
+    }
+
+    /// Returns the metadata snapshotted for a logical bindless texture table.
+    pub fn texture_set_desc(
+        &self,
+        texture_set: TextureSet<'frame>,
+    ) -> Result<&TextureSetDesc, FrameGraphError> {
+        self.validate_handle(texture_set.owner, texture_set.recording)?;
+        self.resource(texture_set.id)?
+            .texture_set()
+            .ok_or_else(|| FrameGraphError::Internal {
+                message: "texture-set handle resolved to another resource kind".into(),
             })
     }
 

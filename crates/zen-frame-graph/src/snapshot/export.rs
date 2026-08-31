@@ -277,6 +277,12 @@ impl<'a> ExportContext<'a> {
                                 buffer_usage_flags(usage)?,
                             )
                         }
+                        (ResourceDescriptor::TextureSet(desc), ResourceUsage::TextureSet) => (
+                            SnapshotResourceDescriptor::TextureSet {
+                                texture_count: desc.texture_count.into(),
+                            },
+                            vec![SnapshotUsageFlag::TextureBinding],
+                        ),
                         _ => {
                             return invalid(format!(
                                 "resource {} kind/descriptor mismatch",
@@ -555,6 +561,26 @@ impl<'a> ExportContext<'a> {
                         });
                     }
                 }
+                ResourceRange::TextureSet => {
+                    if access.view.is_some() || resource.kind != ResourceKind::TextureSet {
+                        return invalid(format!(
+                            "bindless texture-set access {} has texture or buffer metadata",
+                            access.id
+                        ));
+                    }
+                    result.push(SnapshotAccess {
+                        id: access_id(access.id.get(), None),
+                        node_id: node_id(access.pass.get()),
+                        resource_id: resource_id(access.resource.get()),
+                        access: kind,
+                        texture_view_id: None,
+                        texture_region: None,
+                        buffer_range: None,
+                        mode,
+                        contents,
+                        produces_value: access.produces_value,
+                    });
+                }
             }
         }
         Ok(result)
@@ -757,6 +783,8 @@ impl<'a> ExportContext<'a> {
                         (node.kind, expected_kind),
                         (GpuTimingNodeKind::Render, NodeKind::Render)
                             | (GpuTimingNodeKind::Compute, NodeKind::Compute)
+                            | (GpuTimingNodeKind::Copy, NodeKind::Copy)
+                            | (GpuTimingNodeKind::ClearBuffer, NodeKind::ClearBuffer)
                     );
                     if !valid_kind {
                         return invalid(format!("timed node {} kind mismatch", node.pass));
@@ -862,6 +890,7 @@ fn resource_kind(kind: ResourceKind) -> Result<SnapshotResourceKind, SnapshotExp
     match kind {
         ResourceKind::Texture => Ok(SnapshotResourceKind::Texture),
         ResourceKind::Buffer => Ok(SnapshotResourceKind::Buffer),
+        ResourceKind::TextureSet => Ok(SnapshotResourceKind::TextureSet),
     }
 }
 
@@ -905,6 +934,9 @@ fn access_kind(
         AccessRole::IndirectBuffer => (SnapshotAccessKind::BufferIndirect, AccessMode::Read),
         AccessRole::BufferCopySrc => (SnapshotAccessKind::BufferCopySrc, AccessMode::Read),
         AccessRole::BufferCopyDst => (SnapshotAccessKind::BufferCopyDst, AccessMode::Write),
+        AccessRole::BindlessTextureSet => {
+            (SnapshotAccessKind::BindlessTextureSet, AccessMode::Read)
+        }
     };
     Ok(value)
 }

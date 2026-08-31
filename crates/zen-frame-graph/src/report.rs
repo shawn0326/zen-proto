@@ -1,7 +1,7 @@
 use crate::{
     AccessId, AccessMode, AccessRole, AllocationId, BufferDesc, DebugGroupId, DependencyKind,
     HazardKind, NodeKind, PassId, ResourceId, ResourceKind, ResourceOrigin, ResourceRange,
-    RootReason, TextureDesc, TextureViewDesc, UndefinedCause, ValueId, ViewId,
+    RootReason, TextureDesc, TextureSetDesc, TextureViewDesc, UndefinedCause, ValueId, ViewId,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -37,6 +37,8 @@ pub struct CompilationSummary {
 pub enum ResourceUsage {
     Texture(wgpu::TextureUsages),
     Buffer(wgpu::BufferUsages),
+    /// Opaque, externally owned texture-table residency.
+    TextureSet,
 }
 
 impl ResourceUsage {
@@ -44,6 +46,7 @@ impl ResourceUsage {
         match self {
             Self::Texture(value) => value.bits() as u64,
             Self::Buffer(value) => value.bits() as u64,
+            Self::TextureSet => 0,
         }
     }
 }
@@ -53,6 +56,7 @@ impl ResourceUsage {
 pub enum ResourceDescriptor {
     Texture(TextureDesc),
     Buffer(BufferDesc),
+    TextureSet(TextureSetDesc),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -71,6 +71,28 @@ pub struct BufferDesc {
     pub usage: UsagePolicy<wgpu::BufferUsages>,
 }
 
+/// Recording-time metadata for an externally owned bindless texture table.
+///
+/// A texture set is an opaque logical resource: the caller owns the bind group
+/// and its resident texture views, while the FrameGraph tracks whole-set reads.
+/// `texture_count` is diagnostic metadata and includes any reserved fallback
+/// slots present in the table.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct TextureSetDesc {
+    pub label: String,
+    pub texture_count: u32,
+}
+
+impl TextureSetDesc {
+    pub fn new(label: impl Into<String>, texture_count: u32) -> Self {
+        Self {
+            label: label.into(),
+            texture_count,
+        }
+    }
+}
+
 impl BufferDesc {
     pub fn new(label: impl Into<String>, size: u64) -> Self {
         Self {
@@ -276,6 +298,7 @@ macro_rules! define_handle {
 define_handle!(Texture, ResourceId);
 define_handle!(TextureView, ViewId);
 define_handle!(Buffer, ResourceId);
+define_handle!(TextureSet, ResourceId);
 
 /// One ordered zero-fill operation in a structured clear-buffer node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

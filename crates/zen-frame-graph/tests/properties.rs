@@ -108,7 +108,9 @@ proptest! {
             }).collect::<Vec<_>>();
             let buckets = resources.iter().map(|resource| match &resource.descriptor {
                 ResourceDescriptor::Buffer(desc) => desc.size.max(1).next_power_of_two(),
-                ResourceDescriptor::Texture(_) => unreachable!(),
+                ResourceDescriptor::Texture(_) | ResourceDescriptor::TextureSet(_) => {
+                    unreachable!()
+                }
             }).collect::<Vec<_>>();
             prop_assert!(buckets.windows(2).all(|pair| pair[0] == pair[1]));
             let lifetimes_do_not_overlap = resources.windows(2).all(|pair| {

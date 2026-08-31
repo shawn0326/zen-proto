@@ -2,12 +2,59 @@ use zen_frame_graph::{
     AccessRole, BufferDesc, BufferRange, BufferTextureCopyLocation, ClearBufferOp,
     ColorAttachmentOps, CompileOptions, CulledNodeReason, DependencyKind, FrameGraph,
     FrameGraphError, HazardKind, ImportBufferOptions, ImportTextureOptions, InitialContents,
-    ReportLevel, RootReason, TextureCopyLocation, TextureDesc, TextureViewDesc, UsagePolicy,
-    WriteContents,
+    ReportLevel, ResourceKind, ResourceRange, ResourceUsage, RootReason, TextureCopyLocation,
+    TextureDesc, TextureSetDesc, TextureViewDesc, UsagePolicy, WriteContents,
 };
 
 fn full_options() -> CompileOptions {
     CompileOptions::full_report()
+}
+
+#[test]
+fn bindless_texture_set_is_registered_once_and_read_across_passes() {
+    let mut graph = FrameGraph::new();
+    let mut frame = graph.begin_frame();
+    let set = frame
+        .import_texture_set(TextureSetDesc::new("resident-textures", 257))
+        .unwrap();
+    assert_eq!(frame.texture_set_desc(set).unwrap().texture_count, 257);
+
+    for label in ["depth", "shade"] {
+        let mut pass = frame.compute_pass(label);
+        pass.set_side_effect(true);
+        let token = pass.bindless_texture_set(set).unwrap();
+        assert_eq!(token.resource_id(), set.id());
+        pass.finish().unwrap();
+    }
+
+    let compiled = frame.compile(full_options()).unwrap();
+    assert_eq!(
+        compiled.resource_usage(set.id()),
+        Some(ResourceUsage::TextureSet)
+    );
+    let report = compiled.report().unwrap();
+    assert_eq!(report.summary.resource_count, 1);
+    assert_eq!(report.summary.access_count, 2);
+    let full = report.full.as_ref().unwrap();
+    assert_eq!(full.resources[0].kind, ResourceKind::TextureSet);
+    assert_eq!(full.resources[0].lifetime.unwrap().first_use, 0);
+    assert_eq!(full.resources[0].lifetime.unwrap().last_use, 1);
+    assert!(full.accesses.iter().all(|access| {
+        access.resource == set.id()
+            && access.role == AccessRole::BindlessTextureSet
+            && access.range == ResourceRange::TextureSet
+    }));
+    assert!(full.dependencies.is_empty());
+}
+
+#[test]
+fn bindless_texture_set_rejects_an_empty_table() {
+    let mut graph = FrameGraph::new();
+    let mut frame = graph.begin_frame();
+    let error = frame
+        .import_texture_set(TextureSetDesc::new("empty", 0))
+        .unwrap_err();
+    assert_eq!(error.code(), "FG1102");
 }
 
 #[test]
