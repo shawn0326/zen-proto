@@ -33,8 +33,6 @@ fn main() {
         Path::new("../../crates/zen-frame-graph/src/gpu_timing.rs"),
         Path::new("../../crates/zen-frame-graph/src/execution.rs"),
         Path::new("../../crates/zen-render/src/host.rs"),
-        Path::new("../../third_party/wgpu-hal-30.0.1/src/vulkan/command.rs"),
-        Path::new("../../third_party/wgpu-hal-30.0.1/src/vulkan/conv.rs"),
         Path::new("src/device.rs"),
         Path::new("src/meshlet_benchmark.rs"),
         Path::new("src/bin/meshlet-gltf.rs"),

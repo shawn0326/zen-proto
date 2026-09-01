@@ -110,11 +110,6 @@ cargo test -p zen-render-mesh --test vulkan_mesh_shader_probe -- --ignored --noc
 cargo test -p zen-render-mesh --test vulkan_meshlet_smoke -- --ignored --nocapture
 ```
 
-The workspace carries a source patch for `wgpu-hal` 30.0.1 because that release's Vulkan resource
-barriers omit the task/mesh pipeline stages. This is a dependency-level synchronization correction;
-renderer code still uses only wgpu's public API. The patch is isolated under
-`third_party/wgpu-hal-30.0.1` so it can be removed when the correction ships upstream.
-
 The initial production boundary is static opaque rigid instances with standard-Z forward shading.
 Alpha mask/blend, skinning, morph targets, shadows, virtual geometry, and streaming are deliberately
 outside the v1 contract.
