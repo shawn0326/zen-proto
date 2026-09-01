@@ -35,7 +35,7 @@ use zen_demo::{
 use zen_render::{GpuTimingReport, RenderFrameInput};
 use zen_render_mesh::{
     Camera, MeshRenderInput, MeshRenderer, MeshletBuildConfig, MeshletGpuFrameTimings,
-    MeshletRenderInput, MeshletRenderer, PerspectiveProjection,
+    MeshletRenderInput, MeshletRenderer, PerspectiveProjection, TextureSamplingConfig,
 };
 
 static DEMO_ARGS: OnceLock<MeshletDemoArgs> = OnceLock::new();
@@ -319,7 +319,13 @@ impl Example for Demo {
                 flip_v: false,
                 bake_node_transform: false,
             },
-        );
+        )
+        .unwrap_or_else(|error| {
+            fatal(format_args!(
+                "failed to load {}: {error}",
+                model_path.display()
+            ))
+        });
         let (center, radius) = compute_model_bounds(&model);
 
         let needs_meshlet_source = arguments.renderer != DemoRenderer::Legacy
@@ -327,23 +333,25 @@ impl Example for Demo {
             || arguments.auto_profile.is_some();
         let raw_meshes = needs_meshlet_source
             .then(|| raw_static_meshes(&model).unwrap_or_else(|error| fatal(error)));
-        let scene_identity = raw_meshes
-            .as_ref()
-            .map(|meshes| benchmark_scene_identity(&model, meshes, MeshletBuildConfig::default()));
+        let scene_identity = raw_meshes.as_ref().map(|meshes| {
+            benchmark_scene_identity(
+                &model,
+                meshes,
+                MeshletBuildConfig::default(),
+                TextureSamplingConfig::default(),
+            )
+        });
         let auto_profile = arguments.auto_profile.as_ref().map(|path| {
             MeshletAutoProfileFile::read_json_file(path)
                 .unwrap_or_else(|error| fatal(format_args!("failed to load Auto profile: {error}")))
         });
 
-        let (device, queue, adapter_info, meshlet_requirements, meshlet_config) = if let Some(
-            config,
-        ) =
-            arguments.renderer.meshlet_config()
-        {
-            let expected_scene = scene_identity
-                .as_deref()
-                .expect("meshlet paths always compute a scene identity");
-            let requested = request_vulkan_meshlet_device_configured(
+        let (device, queue, adapter_info, meshlet_requirements, meshlet_config, device_sampling) =
+            if let Some(config) = arguments.renderer.meshlet_config() {
+                let expected_scene = scene_identity
+                    .as_deref()
+                    .expect("meshlet paths always compute a scene identity");
+                let requested = request_vulkan_meshlet_device_configured(
                     &instance,
                     &surface,
                     config,
@@ -368,22 +376,29 @@ impl Example for Demo {
                 )
                 .await
                 .unwrap_or_else(|error| fatal(error));
-            (
-                requested.device,
-                requested.queue,
-                requested.adapter_info,
-                Some(requested.requirements),
-                Some(requested.config),
-            )
+                (
+                    requested.device,
+                    requested.queue,
+                    requested.adapter_info,
+                    Some(requested.requirements),
+                    Some(requested.config),
+                    requested.sampling,
+                )
+            } else {
+                let requested = request_vulkan_legacy_device(&instance, &surface).await;
+                (
+                    requested.device,
+                    requested.queue,
+                    requested.adapter_info,
+                    None,
+                    None,
+                    requested.sampling,
+                )
+            };
+        let sampling = if arguments.benchmark_out.is_some() {
+            TextureSamplingConfig::default()
         } else {
-            let requested = request_vulkan_legacy_device(&instance, &surface).await;
-            (
-                requested.device,
-                requested.queue,
-                requested.adapter_info,
-                None,
-                None,
-            )
+            device_sampling
         };
         if arguments.benchmark_out.is_some() {
             let required_timing =
@@ -407,7 +422,10 @@ impl Example for Demo {
                     &model.materials,
                     &model.instances,
                     &model.textures,
-                );
+                    &model.samplers,
+                    sampling,
+                )
+                .unwrap_or_else(|error| fatal(error));
                 DemoRenderHost::Legacy(Box::new(ForwardRenderHost::new(
                     &device,
                     ForwardFrameComposer::new(mesh, surface.format()),
@@ -446,6 +464,8 @@ impl Example for Demo {
                     &model.materials,
                     &model.instances,
                     &model.textures,
+                    &model.samplers,
+                    sampling,
                 )
                 .unwrap_or_else(|error| fatal(error));
                 DemoRenderHost::Meshlet(Box::new(MeshletForwardRenderHost::new(
@@ -803,6 +823,7 @@ fn benchmark_scene_identity(
     model: &LoadedGltfModel,
     meshes: &[zen_render_mesh::meshlet::RawStaticMesh],
     config: MeshletBuildConfig,
+    sampling: TextureSamplingConfig,
 ) -> String {
     let key = meshlet_cache_key(meshes, config);
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -824,8 +845,15 @@ fn benchmark_scene_identity(
         for component in material.emissive_ao.to_array() {
             component.to_bits().hash(&mut hasher);
         }
-        material.tex_ids.hash(&mut hasher);
+        material.albedo.texture_id.hash(&mut hasher);
+        material.albedo.sampler_id.hash(&mut hasher);
+        material.emissive.texture_id.hash(&mut hasher);
+        material.emissive.sampler_id.hash(&mut hasher);
+        material.occlusion.texture_id.hash(&mut hasher);
+        material.occlusion.sampler_id.hash(&mut hasher);
     }
+    model.samplers.hash(&mut hasher);
+    sampling.hash(&mut hasher);
     model.textures.len().hash(&mut hasher);
     for texture in &model.textures {
         texture.width.hash(&mut hasher);

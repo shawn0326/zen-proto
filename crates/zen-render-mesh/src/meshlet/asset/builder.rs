@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use glam::Vec3;
 
@@ -255,24 +255,26 @@ fn generate_normals(positions: &[[f32; 3]], indices: &[u32]) -> Vec<Vec3> {
 
 fn generate_lods(lod0: LodGeometry, config: MeshletBuildConfig) -> Vec<LodGeometry> {
     let mut lods = vec![lod0];
-    while lods.len() < config.max_lods as usize {
-        let previous = lods.last().expect("LOD0 always exists");
-        let previous_triangles = previous.indices.len() / 3;
+    let lod0_triangles = lods[0].indices.len() / 3;
+    for level in 1..config.max_lods as usize {
+        let previous_triangles = lods.last().expect("LOD0 always exists").indices.len() / 3;
         if previous_triangles <= config.min_lod_triangles as usize {
             break;
         }
-        let target = ((previous_triangles as f32 * config.lod_target_ratio).round() as usize)
+        let target = ((lod0_triangles as f32 * config.lod_target_ratio.powi(level as i32)).round()
+            as usize)
+            .max(config.min_lod_triangles as usize)
             .max(1)
-            .min(previous_triangles - 1);
-        let Some(mut simplified) = simplify_with_meshoptimizer(previous, target)
-            .or_else(|| simplify_by_vertex_clustering(previous, target))
-        else {
+            .min(lod0_triangles.saturating_sub(1));
+        let Some(mut simplified) = simplify_with_meshoptimizer(&lods[0], target) else {
             break;
         };
-        if simplified.indices.len() >= previous.indices.len() || simplified.indices.is_empty() {
+        if simplified.indices.len() / 3 >= previous_triangles || simplified.indices.is_empty() {
             break;
         }
-        simplified.geometric_error += previous.geometric_error;
+        simplified.geometric_error = simplified
+            .geometric_error
+            .max(lods.last().expect("LOD0 always exists").geometric_error);
         lods.push(simplified);
     }
     lods
@@ -293,15 +295,43 @@ fn simplify_with_meshoptimizer(
         0,
     )
     .ok()?;
-    let mut geometric_error = 0.0f32;
-    let simplified = meshopt::simplify(
+    let attributes = source
+        .vertices
+        .iter()
+        .map(|vertex| {
+            [
+                vertex.normal.x,
+                vertex.normal.y,
+                vertex.normal.z,
+                vertex.uv[0],
+                vertex.uv[1],
+                vertex.color[0],
+                vertex.color[1],
+                vertex.color[2],
+                vertex.color[3],
+            ]
+        })
+        .collect::<Vec<[f32; 9]>>();
+    const ATTRIBUTE_WEIGHTS: [f32; 9] = [0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
+    let vertex_locks = vec![false; source.vertices.len()];
+    let scale = meshopt::simplify_scale(&adapter);
+    if !scale.is_finite() || scale <= 0.0 {
+        return None;
+    }
+    let mut relative_error = 0.0f32;
+    let simplified = meshopt::simplify_with_attributes_and_locks(
         &source.indices,
         &adapter,
+        bytemuck::cast_slice(&attributes),
+        &ATTRIBUTE_WEIGHTS,
+        std::mem::size_of::<[f32; 9]>(),
+        &vertex_locks,
         target_triangles.checked_mul(3)?,
-        f32::MAX,
-        meshopt::SimplifyOptions::ErrorAbsolute,
-        Some(&mut geometric_error),
+        0.01,
+        meshopt::SimplifyOptions::None,
+        Some(&mut relative_error),
     );
+    let geometric_error = relative_error * scale;
     if simplified.is_empty()
         || !simplified.len().is_multiple_of(3)
         || simplified.len() >= source.indices.len()
@@ -332,235 +362,6 @@ fn simplify_with_meshoptimizer(
         indices,
         geometric_error,
     })
-}
-
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct ClusterKey {
-    cell: [u32; 3],
-    normal: [i8; 3],
-    uv_tile: [i32; 2],
-}
-
-#[derive(Clone)]
-struct ClusterAccumulator {
-    position: Vec3,
-    normal: Vec3,
-    uv: [f64; 2],
-    color: [f64; 4],
-    count: u32,
-}
-
-fn simplify_by_vertex_clustering(
-    source: &LodGeometry,
-    target_triangles: usize,
-) -> Option<LodGeometry> {
-    let (minimum, maximum) = bounds_min_max(&source.vertices);
-    let extent = maximum - minimum;
-    let vertex_scale = (source.vertices.len() as f32).cbrt().ceil() as u32;
-    let max_resolution = vertex_scale.saturating_mul(4).clamp(2, 256);
-    let mut resolutions = BTreeSet::new();
-    resolutions.insert(1);
-    resolutions.insert(max_resolution);
-
-    // Triangle count is mostly monotonic with grid resolution. Binary search limits a million-
-    // vertex asset to a small, bounded number of full scans while retaining deterministic output.
-    let mut low = 1u32;
-    let mut high = max_resolution;
-    for _ in 0..12 {
-        if low > high {
-            break;
-        }
-        let middle = low + (high - low) / 2;
-        resolutions.insert(middle);
-        let count = clustered_triangle_count(source, minimum, extent, middle);
-        if count < target_triangles {
-            low = middle.saturating_add(1);
-        } else if middle == 0 {
-            break;
-        } else {
-            high = middle - 1;
-        }
-    }
-    for center in [low, high] {
-        for delta in 0..=2 {
-            if let Some(value) = center.checked_sub(delta)
-                && value >= 1
-                && value <= max_resolution
-            {
-                resolutions.insert(value);
-            }
-            if let Some(value) = center.checked_add(delta)
-                && value <= max_resolution
-            {
-                resolutions.insert(value);
-            }
-        }
-    }
-
-    let source_triangles = source.indices.len() / 3;
-    let mut best: Option<(usize, usize, LodGeometry)> = None;
-    for resolution in resolutions {
-        let candidate = cluster_geometry(source, minimum, extent, resolution)?;
-        let triangles = candidate.indices.len() / 3;
-        if triangles == 0 || triangles >= source_triangles {
-            continue;
-        }
-        let distance = triangles.abs_diff(target_triangles);
-        // Prefer not to oversimplify when two candidates are equally close.
-        let undershoot = usize::from(triangles < target_triangles);
-        let score = (distance, undershoot);
-        if best
-            .as_ref()
-            .is_none_or(|(best_distance, best_undershoot, _)| {
-                score < (*best_distance, *best_undershoot)
-            })
-        {
-            best = Some((distance, undershoot, candidate));
-        }
-    }
-    best.map(|(_, _, geometry)| geometry)
-}
-
-fn clustered_triangle_count(
-    source: &LodGeometry,
-    minimum: Vec3,
-    extent: Vec3,
-    resolution: u32,
-) -> usize {
-    cluster_geometry(source, minimum, extent, resolution)
-        .map(|geometry| geometry.indices.len() / 3)
-        .unwrap_or(0)
-}
-
-fn cluster_geometry(
-    source: &LodGeometry,
-    minimum: Vec3,
-    extent: Vec3,
-    resolution: u32,
-) -> Option<LodGeometry> {
-    let keys: Vec<_> = source
-        .vertices
-        .iter()
-        .map(|vertex| cluster_key(vertex, minimum, extent, resolution))
-        .collect();
-    let mut accumulators = BTreeMap::<ClusterKey, ClusterAccumulator>::new();
-    for (vertex, &key) in source.vertices.iter().zip(&keys) {
-        let accumulator = accumulators.entry(key).or_insert(ClusterAccumulator {
-            position: Vec3::ZERO,
-            normal: Vec3::ZERO,
-            uv: [0.0; 2],
-            color: [0.0; 4],
-            count: 0,
-        });
-        accumulator.position += vertex.position;
-        accumulator.normal += vertex.normal;
-        for (sum, value) in accumulator.uv.iter_mut().zip(vertex.uv) {
-            *sum += value as f64;
-        }
-        for (sum, value) in accumulator.color.iter_mut().zip(vertex.color) {
-            *sum += value as f64;
-        }
-        accumulator.count += 1;
-    }
-
-    let mut key_to_index = BTreeMap::new();
-    let mut vertices = Vec::with_capacity(accumulators.len());
-    for (key, accumulator) in accumulators {
-        let divisor = accumulator.count as f32;
-        let mut normal = accumulator.normal.normalize_or_zero();
-        if normal == Vec3::ZERO {
-            normal = Vec3::Z;
-        }
-        let index = u32::try_from(vertices.len()).ok()?;
-        key_to_index.insert(key, index);
-        vertices.push(BuildVertex {
-            position: accumulator.position / divisor,
-            normal,
-            uv: [
-                (accumulator.uv[0] / accumulator.count as f64) as f32,
-                (accumulator.uv[1] / accumulator.count as f64) as f32,
-            ],
-            color: [
-                (accumulator.color[0] / accumulator.count as f64) as f32,
-                (accumulator.color[1] / accumulator.count as f64) as f32,
-                (accumulator.color[2] / accumulator.count as f64) as f32,
-                (accumulator.color[3] / accumulator.count as f64) as f32,
-            ],
-        });
-    }
-    let remap: Vec<u32> = keys.iter().map(|key| key_to_index[key]).collect();
-    let mut unique_triangles = BTreeSet::new();
-    let mut indices = Vec::with_capacity(source.indices.len());
-    for triangle in source.indices.as_chunks::<3>().0 {
-        let mapped = [
-            remap[triangle[0] as usize],
-            remap[triangle[1] as usize],
-            remap[triangle[2] as usize],
-        ];
-        if mapped[0] == mapped[1] || mapped[1] == mapped[2] || mapped[2] == mapped[0] {
-            continue;
-        }
-        let a = vertices[mapped[0] as usize].position;
-        let b = vertices[mapped[1] as usize].position;
-        let c = vertices[mapped[2] as usize].position;
-        if (b - a).cross(c - a).length_squared() <= 1.0e-20 {
-            continue;
-        }
-        let mut canonical = mapped;
-        canonical.sort_unstable();
-        if unique_triangles.insert(canonical) {
-            indices.extend_from_slice(&mapped);
-        }
-    }
-    if indices.is_empty() {
-        return None;
-    }
-
-    let mut geometric_error = 0.0f32;
-    for (source_vertex, &mapped) in source.vertices.iter().zip(&remap) {
-        geometric_error = geometric_error.max(
-            source_vertex
-                .position
-                .distance(vertices[mapped as usize].position),
-        );
-    }
-    Some(LodGeometry {
-        vertices,
-        indices,
-        geometric_error,
-    })
-}
-
-fn cluster_key(vertex: &BuildVertex, minimum: Vec3, extent: Vec3, resolution: u32) -> ClusterKey {
-    let normalized = (vertex.position - minimum) / extent.max(Vec3::splat(1.0e-20));
-    let scaled = (normalized * resolution as f32).floor();
-    let upper = resolution.saturating_sub(1) as f32;
-    let normal = vertex.normal.normalize_or_zero();
-    ClusterKey {
-        cell: [
-            scaled.x.clamp(0.0, upper) as u32,
-            scaled.y.clamp(0.0, upper) as u32,
-            scaled.z.clamp(0.0, upper) as u32,
-        ],
-        // Preserve sharp normal discontinuities while allowing smooth surfaces to cluster.
-        normal: [
-            (normal.x * 7.0).round() as i8,
-            (normal.y * 7.0).round() as i8,
-            (normal.z * 7.0).round() as i8,
-        ],
-        // Keep common wrap-boundary duplicates separate.
-        uv_tile: [vertex.uv[0].floor() as i32, vertex.uv[1].floor() as i32],
-    }
-}
-
-fn bounds_min_max(vertices: &[BuildVertex]) -> (Vec3, Vec3) {
-    let mut minimum = Vec3::splat(f32::INFINITY);
-    let mut maximum = Vec3::splat(f32::NEG_INFINITY);
-    for vertex in vertices {
-        minimum = minimum.min(vertex.position);
-        maximum = maximum.max(vertex.position);
-    }
-    (minimum, maximum)
 }
 
 fn append_mesh(

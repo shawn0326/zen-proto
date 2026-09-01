@@ -32,7 +32,7 @@ impl Example for Demo {
         let instance = wgpu::Instance::default();
         let size = window.inner_size();
         let surface = instance.create_surface(window).unwrap();
-        let (device, queue) = request_device_and_queue(&instance, &surface).await;
+        let (device, queue, sampling) = request_device_and_queue(&instance, &surface).await;
         let surface = SurfaceState::new(&device, surface, size.width, size.height);
 
         let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -58,7 +58,8 @@ impl Example for Demo {
                 flip_v: false,
                 bake_node_transform: false,
             },
-        );
+        )
+        .unwrap_or_else(|error| panic!("failed to load {}: {error}", path.display()));
 
         let (center, radius) = compute_model_bounds(&model.meshes);
 
@@ -87,7 +88,10 @@ impl Example for Demo {
             &model.materials,
             &model.instances,
             &model.textures,
-        );
+            &model.samplers,
+            sampling,
+        )
+        .expect("glTF resources must satisfy legacy renderer limits");
         let composer = ForwardFrameComposer::new(mesh, surface.format());
         let render_host = ForwardRenderHost::new(&device, composer);
 

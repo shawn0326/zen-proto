@@ -1,4 +1,4 @@
-//! Opt-in real-hardware smoke test for all three Vulkan meshlet backends.
+//! Opt-in real-hardware smoke test for legacy plus all three Vulkan meshlet backends.
 //!
 //! Run with:
 //! `cargo test -p zen-render-mesh --test vulkan_meshlet_smoke -- --ignored --nocapture`
@@ -10,9 +10,11 @@ use zen_frame_graph::{
     UsagePolicy,
 };
 use zen_render_mesh::{
-    Camera, Instance, MeshRenderTargets, MeshletBackend, MeshletBindlessConfig,
-    MeshletCapabilities, MeshletCapacityConfig, MeshletRenderInput, MeshletRenderer,
-    MeshletRendererConfig, MeshletSceneAsset, RawStaticMesh,
+    Camera, Instance, Material, MaterialTextureBinding, Mesh, MeshRenderInput, MeshRenderTargets,
+    MeshRenderer, MeshletBackend, MeshletBindlessConfig, MeshletCapabilities,
+    MeshletCapacityConfig, MeshletRenderInput, MeshletRenderer, MeshletRendererConfig,
+    MeshletSceneAsset, RawStaticMesh, Texture, TextureAddressMode, TextureMagFilter,
+    TextureMinFilter, TextureSampler, TextureSamplingConfig, Vertex,
 };
 
 const EXTENT: wgpu::Extent3d = wgpu::Extent3d {
@@ -21,6 +23,35 @@ const EXTENT: wgpu::Extent3d = wgpu::Extent3d {
     depth_or_array_layers: 1,
 };
 const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+
+#[derive(Clone, Copy)]
+struct SamplingCase {
+    name: &'static str,
+    address: TextureAddressMode,
+    uv: [f32; 2],
+    expected_channel: usize,
+}
+
+const SAMPLING_CASES: [SamplingCase; 3] = [
+    SamplingCase {
+        name: "repeat",
+        address: TextureAddressMode::Repeat,
+        uv: [1.1, 0.1],
+        expected_channel: 0,
+    },
+    SamplingCase {
+        name: "clamp",
+        address: TextureAddressMode::ClampToEdge,
+        uv: [1.1, 0.1],
+        expected_channel: 1,
+    },
+    SamplingCase {
+        name: "mirrored-repeat",
+        address: TextureAddressMode::MirroredRepeat,
+        uv: [1.1, 0.1],
+        expected_channel: 1,
+    },
+];
 
 #[test]
 #[ignore = "requires a Vulkan adapter with descriptor indexing and EXT_mesh_shader"]
@@ -44,28 +75,159 @@ async fn run() {
     eprintln!("Vulkan meshlet smoke adapter: {:?}", adapter.get_info());
 
     for instance_count in [2, 33] {
-        let mut indexed_reference: Option<Vec<FrameCapture>> = None;
-        for backend in [
-            MeshletBackend::IndexedIndirect,
-            MeshletBackend::MeshOnly,
-            MeshletBackend::TaskMesh,
-        ] {
-            let captures = render_instances(&adapter, backend, instance_count).await;
-            if let Some(reference) = indexed_reference.as_ref() {
-                compare_captures(reference, &captures, backend, instance_count);
-            } else {
-                indexed_reference = Some(captures.clone());
+        for sampling_case in SAMPLING_CASES {
+            let reference = render_legacy(&adapter, instance_count, sampling_case).await;
+            for backend in [
+                MeshletBackend::IndexedIndirect,
+                MeshletBackend::MeshOnly,
+                MeshletBackend::TaskMesh,
+            ] {
+                let captures =
+                    render_instances(&adapter, backend, instance_count, sampling_case).await;
+                compare_captures(&reference, &captures, backend, instance_count);
+                eprintln!(
+                    "Vulkan meshlet smoke passed: {backend}, sampling={}, instances={instance_count}",
+                    sampling_case.name
+                );
             }
-            eprintln!("Vulkan meshlet smoke passed: {backend}, instances={instance_count}");
+            compare_captures(
+                &reference[0..1],
+                &reference[1..2],
+                MeshletBackend::IndexedIndirect,
+                instance_count,
+            );
         }
-        let reference = indexed_reference.unwrap();
-        compare_captures(
-            &reference[0..1],
-            &reference[1..2],
-            MeshletBackend::IndexedIndirect,
-            instance_count,
-        );
     }
+}
+
+async fn render_legacy(
+    adapter: &wgpu::Adapter,
+    instance_count: u32,
+    sampling_case: SamplingCase,
+) -> Vec<FrameCapture> {
+    let features = MeshRenderer::required_features();
+    let (device, queue) = adapter
+        .request_device(&wgpu::DeviceDescriptor {
+            label: Some("zen.meshlet.vulkan-smoke.legacy"),
+            required_features: features,
+            required_limits: MeshRenderer::required_limits(&adapter.limits()),
+            ..Default::default()
+        })
+        .await
+        .expect("failed to request legacy smoke device");
+    let uv = glam::Vec2::from_array(sampling_case.uv);
+    let mesh = Mesh {
+        vertices: vec![
+            Vertex {
+                position: glam::Vec4::new(-0.65, -0.55, 0.0, 1.0),
+                normal: glam::Vec4::Z,
+                color: glam::Vec4::ONE,
+                uv,
+            },
+            Vertex {
+                position: glam::Vec4::new(0.65, -0.55, 0.0, 1.0),
+                normal: glam::Vec4::Z,
+                color: glam::Vec4::ONE,
+                uv,
+            },
+            Vertex {
+                position: glam::Vec4::new(0.0, 0.65, 0.0, 1.0),
+                normal: glam::Vec4::Z,
+                color: glam::Vec4::ONE,
+                uv,
+            },
+        ],
+        indices: vec![0, 1, 2],
+    };
+    let instances = smoke_instances(instance_count);
+    let (materials, textures, samplers) = sampling_resources(sampling_case.address);
+    let mut renderer = MeshRenderer::new(
+        &device,
+        &queue,
+        COLOR_FORMAT,
+        &[mesh],
+        &materials,
+        &instances,
+        &textures,
+        &samplers,
+        TextureSamplingConfig::default(),
+    )
+    .unwrap();
+    render_legacy_captures(
+        &device,
+        &queue,
+        &mut renderer,
+        instance_count,
+        sampling_case.expected_channel,
+    )
+}
+
+fn render_legacy_captures(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &mut MeshRenderer,
+    instance_count: u32,
+    expected_channel: usize,
+) -> Vec<FrameCapture> {
+    let color = create_texture(
+        device,
+        "meshlet.smoke.legacy.color",
+        COLOR_FORMAT,
+        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+    );
+    let depth = create_texture(
+        device,
+        "meshlet.smoke.legacy.depth",
+        wgpu::TextureFormat::Depth32Float,
+        wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_SRC,
+    );
+    let camera = Camera::default();
+    let mut captures = Vec::new();
+    for enable_occlusion_culling in [false, true] {
+        let mut graph = FrameGraph::with_device(device);
+        let mut frame = graph.begin_frame();
+        let color_handle = import_texture(&mut frame, &color, InitialContents::Undefined);
+        let depth_handle = import_texture(&mut frame, &depth, InitialContents::Undefined);
+        let prepared = renderer.prepare_frame(
+            queue,
+            MeshRenderInput {
+                camera,
+                debug_camera: None,
+                enable_occlusion_culling,
+            },
+            EXTENT,
+        );
+        renderer
+            .record_frame_graph(
+                &mut frame,
+                MeshRenderTargets::new(color_handle, depth_handle),
+                &prepared,
+            )
+            .unwrap();
+        frame
+            .mark_texture_root(color_handle, RootReason::DebugCapture)
+            .unwrap();
+        frame
+            .compile(CompileOptions::default())
+            .unwrap()
+            .execute(queue)
+            .unwrap();
+        renderer.after_submit(device, prepared);
+        let color = read_rgba8(device, queue, &color);
+        let depth = read_depth32(device, queue, &depth);
+        assert_instance_center_probes(
+            &color,
+            &depth,
+            camera,
+            instance_count,
+            MeshletBackend::IndexedIndirect,
+            expected_channel,
+        );
+        captures.push(FrameCapture { color, depth });
+    }
+    captures
 }
 
 #[derive(Clone)]
@@ -78,6 +240,7 @@ async fn render_instances(
     adapter: &wgpu::Adapter,
     backend: MeshletBackend,
     instance_count: u32,
+    sampling_case: SamplingCase,
 ) -> Vec<FrameCapture> {
     let config = MeshletRendererConfig {
         backend,
@@ -111,26 +274,16 @@ async fn render_instances(
         .await
         .unwrap_or_else(|error| panic!("failed to request {backend} smoke device: {error}"));
 
-    let source = RawStaticMesh::new(
+    let mut source = RawStaticMesh::new(
         vec![[-0.65, -0.55, 0.0], [0.65, -0.55, 0.0], [0.0, 0.65, 0.0]],
         vec![0, 1, 2],
     );
+    source.normals = vec![[0.0, 0.0, 1.0]; 3];
+    source.tex_coords = vec![sampling_case.uv; 3];
+    source.colors = vec![[1.0; 4]; 3];
     let asset = MeshletSceneAsset::build(&[source], Default::default()).unwrap();
-    let instances = (0..instance_count)
-        .map(|index| {
-            let translation = instance_translation(index);
-            Instance {
-                transform: glam::Mat4::from_scale_rotation_translation(
-                    glam::Vec3::splat(0.16),
-                    glam::Quat::IDENTITY,
-                    translation,
-                ),
-                mesh_id: 0,
-                material_id: 0,
-                _pad: [0; 2],
-            }
-        })
-        .collect::<Vec<_>>();
+    let instances = smoke_instances(instance_count);
+    let (materials, textures, samplers) = sampling_resources(sampling_case.address);
     let mut renderer = MeshletRenderer::new(
         &device,
         &queue,
@@ -138,9 +291,11 @@ async fn render_instances(
         config,
         &requirements,
         &asset,
-        &[],
+        &materials,
         &instances,
-        &[],
+        &textures,
+        &samplers,
+        TextureSamplingConfig::default(),
     )
     .unwrap();
 
@@ -203,13 +358,70 @@ async fn render_instances(
             "{backend} rendered only {drawn_pixels} non-clear pixels for {instance_count} instances (occlusion={enable_occlusion_culling})"
         );
         let depths = read_depth32(&device, &queue, &depth);
-        assert_instance_center_probes(&pixels, &depths, camera, instance_count, backend);
+        assert_instance_center_probes(
+            &pixels,
+            &depths,
+            camera,
+            instance_count,
+            backend,
+            sampling_case.expected_channel,
+        );
         captures.push(FrameCapture {
             color: pixels,
             depth: depths,
         });
     }
     captures
+}
+
+fn smoke_instances(instance_count: u32) -> Vec<Instance> {
+    (0..instance_count)
+        .map(|index| {
+            let translation = instance_translation(index);
+            Instance {
+                transform: glam::Mat4::from_scale_rotation_translation(
+                    glam::Vec3::splat(0.16),
+                    glam::Quat::IDENTITY,
+                    translation,
+                ),
+                mesh_id: 0,
+                material_id: 0,
+                _pad: [0; 2],
+            }
+        })
+        .collect()
+}
+
+fn sampling_resources(
+    address: TextureAddressMode,
+) -> (Vec<Material>, Vec<Texture>, Vec<TextureSampler>) {
+    let binding = MaterialTextureBinding {
+        texture_id: 0,
+        sampler_id: 0,
+    };
+    let materials = vec![Material {
+        albedo_factor: glam::Vec4::ONE,
+        emissive_ao: glam::Vec4::W,
+        albedo: binding,
+        emissive: binding,
+        occlusion: binding,
+        _padding: [0; 2],
+    }];
+    let textures = vec![Texture {
+        width: 2,
+        height: 2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        pixels: vec![
+            255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255,
+        ],
+    }];
+    let samplers = vec![TextureSampler {
+        address_mode_u: address,
+        address_mode_v: address,
+        mag_filter: TextureMagFilter::Nearest,
+        min_filter: TextureMinFilter::Nearest,
+    }];
+    (materials, textures, samplers)
 }
 
 fn compare_captures(
@@ -328,6 +540,7 @@ fn assert_instance_center_probes(
     camera: Camera,
     instance_count: u32,
     backend: MeshletBackend,
+    expected_channel: usize,
 ) {
     let width = EXTENT.width as i32;
     let height = EXTENT.height as i32;
@@ -345,7 +558,11 @@ fn assert_instance_center_probes(
                     return false;
                 }
                 let index = y as usize * width as usize + x as usize;
-                color[index * 4..index * 4 + 4] != *clear && depth[index] < 1.0
+                let pixel = &color[index * 4..index * 4 + 4];
+                let other_channel = usize::from(expected_channel == 0);
+                pixel != clear
+                    && depth[index] < 1.0
+                    && pixel[expected_channel] > pixel[other_channel].saturating_add(32)
             })
         });
         assert!(

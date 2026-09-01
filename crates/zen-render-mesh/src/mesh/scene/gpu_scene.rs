@@ -1,6 +1,6 @@
 use super::{
     Instance, InstanceStorage, Material, MaterialStorage, Mesh, MeshStorage, Texture,
-    TextureStorage,
+    TextureResourceError, TextureSampler, TextureSamplingConfig, TextureStorage,
 };
 
 pub(crate) struct MeshGpuScene {
@@ -18,18 +18,20 @@ impl MeshGpuScene {
         materials: &[Material],
         instances: &[Instance],
         textures: &[Texture],
-    ) -> Self {
+        samplers: &[TextureSampler],
+        sampling: TextureSamplingConfig,
+    ) -> Result<Self, TextureResourceError> {
         let meshes = MeshStorage::from_meshes(device, meshes);
         let materials = MaterialStorage::from_materials(device, materials);
         let instances = InstanceStorage::from_instances(device, instances);
-        let textures = TextureStorage::from_textures(device, queue, textures);
+        let textures = TextureStorage::from_resources(device, queue, textures, samplers, sampling)?;
 
-        Self {
+        Ok(Self {
             meshes,
             materials,
             instances,
             textures,
-        }
+        })
     }
 
     pub(crate) fn meshes(&self) -> &MeshStorage {

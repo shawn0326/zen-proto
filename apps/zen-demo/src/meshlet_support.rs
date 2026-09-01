@@ -403,6 +403,7 @@ mod tests {
                 _pad: [0; 2],
             }],
             textures: Vec::new(),
+            samplers: Vec::new(),
         }
     }
 

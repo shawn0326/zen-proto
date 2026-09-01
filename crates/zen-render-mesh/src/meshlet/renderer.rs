@@ -28,7 +28,10 @@ use super::{
 };
 use crate::{
     Camera, MeshRenderTargets,
-    mesh::{Instance, Material, Texture, visibility::HiZStage},
+    mesh::{
+        Instance, Material, MaterialTextureBinding, Texture, TextureSampler, TextureSamplingConfig,
+        visibility::HiZStage,
+    },
 };
 use zen_frame_graph::{Frame, FrameGraphError, TextureDesc};
 
@@ -119,6 +122,8 @@ impl MeshletRenderer {
         materials: &[Material],
         instances: &[Instance],
         textures: &[Texture],
+        samplers: &[TextureSampler],
+        sampling: TextureSamplingConfig,
     ) -> Result<Self, MeshletRendererError> {
         config.validate()?;
         asset.validate()?;
@@ -141,6 +146,14 @@ impl MeshletRenderer {
                 capacity: available_texture_slots,
             });
         }
+        let available_sampler_slots = bindless_capacity.samplers.saturating_sub(1);
+        if samplers.len() > available_sampler_slots as usize {
+            return Err(MeshletRendererError::SamplerCapacityExceeded {
+                actual: samplers.len(),
+                capacity: available_sampler_slots,
+            });
+        }
+        validate_material_resources(materials, textures.len(), samplers.len())?;
 
         validate_gpu_buffer_limits(
             device,
@@ -157,8 +170,17 @@ impl MeshletRenderer {
             bindless_capacity.textures,
             bindless_capacity.samplers,
             textures,
+            samplers,
+            sampling,
         )?;
-        let upload = build_gpu_upload(asset, materials, instances, textures.len(), &bindless)?;
+        let upload = build_gpu_upload(
+            asset,
+            materials,
+            instances,
+            textures.len(),
+            samplers.len(),
+            &bindless,
+        )?;
         let scene = MeshletGpuScene::new(device, upload, config.capacities);
         let passes = MeshletPassSet::new(
             device,
@@ -227,9 +249,9 @@ impl MeshletRenderer {
     /// Queues a sampler-table change for publication at the next frame boundary.
     pub fn insert_sampler(
         &mut self,
-        sampler: wgpu::Sampler,
+        sampler: TextureSampler,
     ) -> Result<SamplerHandle, BindlessSamplerError> {
-        self.bindless.insert_sampler(sampler)
+        self.bindless.insert_sampler(&self.device, sampler)
     }
 
     pub fn remove_sampler(&mut self, handle: SamplerHandle) -> Result<(), BindlessSamplerError> {
@@ -545,6 +567,7 @@ fn build_gpu_upload(
     source_materials: &[Material],
     source_instances: &[Instance],
     texture_count: usize,
+    sampler_count: usize,
     bindless: &BindlessTextureArena,
 ) -> Result<MeshletGpuSceneUpload, MeshletRendererError> {
     let vertices = asset
@@ -625,33 +648,49 @@ fn build_gpu_upload(
 
     let fallbacks = bindless.fallbacks();
     let fallback_sampler = bindless.fallback_samplers().linear;
-    let remap = |source: u32, fallback: TextureHandle| {
-        usize::try_from(source)
-            .ok()
-            .filter(|index| *index < texture_count)
-            .map_or(fallback.slot, |index| {
-                BindlessTextureArena::RESERVED_FALLBACK_COUNT + index as u32
-            })
+    let remap_texture = |source: u32, fallback: TextureHandle| {
+        if texture_count == 0 {
+            fallback.slot
+        } else {
+            BindlessTextureArena::RESERVED_FALLBACK_COUNT + source
+        }
+    };
+    let remap_sampler = |source: u32| {
+        if sampler_count == 0 {
+            fallback_sampler.slot
+        } else {
+            1 + source
+        }
     };
     let mut materials = if source_materials.is_empty() {
         vec![Material {
             albedo_factor: glam::Vec4::ONE,
             emissive_ao: glam::Vec4::W,
-            tex_ids: [
-                fallbacks.white.slot,
-                fallbacks.black.slot,
-                fallbacks.white.slot,
-                fallback_sampler.slot,
-            ],
+            albedo: MaterialTextureBinding {
+                texture_id: fallbacks.white.slot,
+                sampler_id: fallback_sampler.slot,
+            },
+            emissive: MaterialTextureBinding {
+                texture_id: fallbacks.black.slot,
+                sampler_id: fallback_sampler.slot,
+            },
+            occlusion: MaterialTextureBinding {
+                texture_id: fallbacks.white.slot,
+                sampler_id: fallback_sampler.slot,
+            },
+            _padding: [0; 2],
         }]
     } else {
         source_materials.to_vec()
     };
     for material in &mut materials {
-        material.tex_ids[0] = remap(material.tex_ids[0], fallbacks.white);
-        material.tex_ids[1] = remap(material.tex_ids[1], fallbacks.black);
-        material.tex_ids[2] = remap(material.tex_ids[2], fallbacks.white);
-        material.tex_ids[3] = fallback_sampler.slot;
+        material.albedo.texture_id = remap_texture(material.albedo.texture_id, fallbacks.white);
+        material.albedo.sampler_id = remap_sampler(material.albedo.sampler_id);
+        material.emissive.texture_id = remap_texture(material.emissive.texture_id, fallbacks.black);
+        material.emissive.sampler_id = remap_sampler(material.emissive.sampler_id);
+        material.occlusion.texture_id =
+            remap_texture(material.occlusion.texture_id, fallbacks.white);
+        material.occlusion.sampler_id = remap_sampler(material.occlusion.sampler_id);
     }
 
     let mut instances = Vec::with_capacity(source_instances.len());
@@ -692,6 +731,40 @@ fn build_gpu_upload(
         instances,
         materials,
     })
+}
+
+fn validate_material_resources(
+    materials: &[Material],
+    texture_count: usize,
+    sampler_count: usize,
+) -> Result<(), MeshletRendererError> {
+    let effective_texture_count = texture_count.max(1);
+    let effective_sampler_count = sampler_count.max(1);
+    for (material_index, material) in materials.iter().enumerate() {
+        for (slot, binding) in [
+            ("albedo", material.albedo),
+            ("emissive", material.emissive),
+            ("occlusion", material.occlusion),
+        ] {
+            if binding.texture_id as usize >= effective_texture_count {
+                return Err(MeshletRendererError::InvalidMaterialTexture {
+                    material: material_index,
+                    slot,
+                    texture_id: binding.texture_id,
+                    texture_count: effective_texture_count,
+                });
+            }
+            if binding.sampler_id as usize >= effective_sampler_count {
+                return Err(MeshletRendererError::InvalidMaterialSampler {
+                    material: material_index,
+                    slot,
+                    sampler_id: binding.sampler_id,
+                    sampler_count: effective_sampler_count,
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 fn is_finite_affine(transform: glam::Mat4) -> bool {
@@ -913,6 +986,26 @@ pub enum MeshletRendererError {
     InstanceCapacityExceeded { actual: usize, capacity: u32 },
     #[error("scene has {actual} textures but bindless user capacity is {capacity}")]
     TextureCapacityExceeded { actual: usize, capacity: u32 },
+    #[error("scene has {actual} samplers but bindless user capacity is {capacity}")]
+    SamplerCapacityExceeded { actual: usize, capacity: u32 },
+    #[error(
+        "material {material} {slot} texture index {texture_id} is out of range for {texture_count} textures"
+    )]
+    InvalidMaterialTexture {
+        material: usize,
+        slot: &'static str,
+        texture_id: u32,
+        texture_count: usize,
+    },
+    #[error(
+        "material {material} {slot} sampler index {sampler_id} is out of range for {sampler_count} samplers"
+    )]
+    InvalidMaterialSampler {
+        material: usize,
+        slot: &'static str,
+        sampler_id: u32,
+        sampler_count: usize,
+    },
     #[error(
         "instance dispatch needs {groups} workgroups, exceeding a {max_dimension}x{max_dimension} dispatch"
     )]
@@ -1023,6 +1116,8 @@ mod tests {
             &[],
             instances,
             &[],
+            &[],
+            TextureSamplingConfig::default(),
         )
         .unwrap();
         (device, queue, renderer)

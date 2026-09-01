@@ -14,7 +14,10 @@ struct VertexPacked {
 struct MaterialData {
     albedo_factor: vec4<f32>,
     emissive_ao: vec4<f32>,
-    tex_ids: vec4<u32>,
+    albedo: vec2<u32>,
+    emissive: vec2<u32>,
+    occlusion: vec2<u32>,
+    _padding: vec2<u32>,
 };
 
 struct InstanceData {
@@ -433,11 +436,11 @@ fn ms_task_main(
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let material = materials[input.material_id];
-    let base = textureSample(textures[material.tex_ids.x], samplers[material.tex_ids.w], input.uv)
+    let base = textureSample(textures[material.albedo.x], samplers[material.albedo.y], input.uv)
         * material.albedo_factor * input.color;
-    let emission = textureSample(textures[material.tex_ids.y], samplers[material.tex_ids.w], input.uv).rgb
+    let emission = textureSample(textures[material.emissive.x], samplers[material.emissive.y], input.uv).rgb
         * material.emissive_ao.rgb;
-    let ao = clamp(textureSample(textures[material.tex_ids.z], samplers[material.tex_ids.w], input.uv).r
+    let ao = clamp(textureSample(textures[material.occlusion.x], samplers[material.occlusion.y], input.uv).r
         * material.emissive_ao.w, 0.0, 1.0);
     let normal = normalize_or(input.normal, vec3<f32>(0.0, 0.0, 1.0));
     let lighting = max(dot(normal, normalize(vec3<f32>(0.5, 1.0, 0.8))), 0.0);

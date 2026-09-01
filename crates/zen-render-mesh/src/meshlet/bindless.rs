@@ -3,7 +3,8 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-use crate::mesh::Texture;
+use crate::mesh::scene::TextureUploader;
+use crate::mesh::{Texture, TextureSampler, TextureSamplingConfig};
 
 /// Stable CPU-side reference to one bindless texture slot.
 ///
@@ -56,10 +57,14 @@ pub enum BindlessTextureError {
     UnsupportedFormat { actual: wgpu::TextureFormat },
     #[error("texture byte size overflow for {width}x{height} RGBA8 data")]
     SizeOverflow { width: u32, height: u32 },
-    #[error("could not reserve {bytes} bytes for padded texture upload")]
-    UploadAllocationFailed { bytes: usize },
     #[error("texture has {actual} bytes, expected {expected} bytes of RGBA8 data")]
     PixelSizeMismatch { actual: usize, expected: usize },
+    #[error(
+        "bindless sampler capacity {capacity} cannot fit {actual} initial samplers plus fallback"
+    )]
+    InitialSamplerCapacityExceeded { actual: usize, capacity: u32 },
+    #[error("failed to create or upload a bindless resource: {message}")]
+    Resource { message: String },
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -68,6 +73,8 @@ pub enum BindlessSamplerError {
     Full { capacity: u32 },
     #[error("sampler handle {handle:?} is stale or invalid")]
     InvalidHandle { handle: SamplerHandle },
+    #[error("failed to create bindless sampler: {message}")]
+    Resource { message: String },
 }
 
 #[derive(Debug)]
@@ -113,6 +120,8 @@ pub(crate) struct BindlessTextureArena {
     completed_submission: Arc<AtomicU64>,
     fallbacks: FallbackTextureHandles,
     fallback_samplers: FallbackSamplerHandles,
+    uploader: TextureUploader,
+    sampling: TextureSamplingConfig,
 }
 
 impl BindlessTextureArena {
@@ -124,6 +133,8 @@ impl BindlessTextureArena {
         max_textures: u32,
         max_samplers: u32,
         initial: &[Texture],
+        initial_samplers: &[TextureSampler],
+        sampling: TextureSamplingConfig,
     ) -> Result<Self, BindlessTextureError> {
         if max_textures < Self::RESERVED_FALLBACK_COUNT {
             return Err(BindlessTextureError::CapacityTooSmall {
@@ -131,6 +142,12 @@ impl BindlessTextureArena {
             });
         }
         let max_samplers = max_samplers.max(1);
+        if initial_samplers.len() > max_samplers.saturating_sub(1) as usize {
+            return Err(BindlessTextureError::InitialSamplerCapacityExceeded {
+                actual: initial_samplers.len(),
+                capacity: max_samplers.saturating_sub(1),
+            });
+        }
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("meshlet.bindless.layout"),
             entries: &[
@@ -153,19 +170,12 @@ impl BindlessTextureArena {
             ],
         });
 
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("meshlet.bindless.linear-sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            // Keep the geometry benchmark independent from optional anisotropic-filtering
-            // support; the renderer does not request that feature.
-            anisotropy_clamp: 1,
-            ..Default::default()
-        });
+        let sampler = TextureSampler::default()
+            .create_wgpu_sampler(device, sampling, "meshlet.bindless.fallback-sampler")
+            .map_err(|error| BindlessTextureError::Resource {
+                message: error.to_string(),
+            })?;
+        let uploader = TextureUploader::new(device);
 
         let mut slots = Vec::with_capacity(max_textures as usize);
         for _ in 0..max_textures {
@@ -188,10 +198,14 @@ impl BindlessTextureArena {
             },
         ];
         for (slot, source) in fallback_sources.iter().enumerate() {
-            let (texture, view) =
-                upload_texture(device, queue, source, "meshlet.bindless.fallback")?;
-            slots[slot].texture = Some(texture);
-            slots[slot].view = Some(view);
+            validate_texture(device, source)?;
+            let uploaded = uploader
+                .upload(device, queue, source, slot, "meshlet.bindless.fallback")
+                .map_err(|error| BindlessTextureError::Resource {
+                    message: error.to_string(),
+                })?;
+            slots[slot].texture = Some(uploaded.texture);
+            slots[slot].view = Some(uploaded.view);
             slots[slot].reserved = true;
         }
 
@@ -222,6 +236,19 @@ impl BindlessTextureArena {
                 reserved: false,
             });
         }
+        for (index, descriptor) in initial_samplers.iter().copied().enumerate() {
+            sampler_slots[index + 1].sampler = Some(
+                descriptor
+                    .create_wgpu_sampler(
+                        device,
+                        sampling,
+                        &format!("meshlet.bindless.sampler.{index}"),
+                    )
+                    .map_err(|error| BindlessTextureError::Resource {
+                        message: error.to_string(),
+                    })?,
+            );
+        }
         let fallback_samplers = FallbackSamplerHandles {
             linear: SamplerHandle {
                 slot: 0,
@@ -244,7 +271,9 @@ impl BindlessTextureArena {
                 .collect(),
             max_samplers,
             sampler_slots,
-            free_sampler_slots: (1..max_samplers).rev().collect(),
+            free_sampler_slots: ((1 + initial_samplers.len() as u32)..max_samplers)
+                .rev()
+                .collect(),
             layout,
             current: Arc::new(BindlessEpoch {
                 id: 0,
@@ -258,6 +287,8 @@ impl BindlessTextureArena {
             completed_submission: Arc::new(AtomicU64::new(0)),
             fallbacks,
             fallback_samplers,
+            uploader,
+            sampling,
         };
         for texture in initial {
             arena.insert(device, queue, texture)?;
@@ -295,7 +326,19 @@ impl BindlessTextureArena {
         let slot_index = *self.free_slots.last().ok_or(BindlessTextureError::Full {
             capacity: self.max_textures,
         })?;
-        let (texture, view) = upload_texture(device, queue, source, "meshlet.bindless.texture")?;
+        validate_texture(device, source)?;
+        let uploaded = self
+            .uploader
+            .upload(
+                device,
+                queue,
+                source,
+                slot_index as usize,
+                "meshlet.bindless.texture",
+            )
+            .map_err(|error| BindlessTextureError::Resource {
+                message: error.to_string(),
+            })?;
         let removed = self
             .free_slots
             .pop()
@@ -303,8 +346,8 @@ impl BindlessTextureArena {
         debug_assert_eq!(removed, slot_index);
         let slot = &mut self.slots[slot_index as usize];
         debug_assert!(slot.texture.is_none());
-        slot.texture = Some(texture);
-        slot.view = Some(view);
+        slot.texture = Some(uploaded.texture);
+        slot.view = Some(uploaded.view);
         self.dirty = true;
         Ok(TextureHandle {
             slot: slot_index,
@@ -329,7 +372,8 @@ impl BindlessTextureArena {
 
     pub(crate) fn insert_sampler(
         &mut self,
-        sampler: wgpu::Sampler,
+        device: &wgpu::Device,
+        descriptor: TextureSampler,
     ) -> Result<SamplerHandle, BindlessSamplerError> {
         let slot_index = *self
             .free_sampler_slots
@@ -344,7 +388,13 @@ impl BindlessTextureArena {
         debug_assert_eq!(removed, slot_index);
         let slot = &mut self.sampler_slots[slot_index as usize];
         debug_assert!(slot.sampler.is_none());
-        slot.sampler = Some(sampler);
+        slot.sampler = Some(
+            descriptor
+                .create_wgpu_sampler(device, self.sampling, "meshlet.bindless.dynamic-sampler")
+                .map_err(|error| BindlessSamplerError::Resource {
+                    message: error.to_string(),
+                })?,
+        );
         self.dirty = true;
         Ok(SamplerHandle {
             slot: slot_index,
@@ -424,7 +474,6 @@ impl BindlessTextureArena {
         });
     }
 }
-
 fn create_bind_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
@@ -471,93 +520,6 @@ fn create_bind_group(
             },
         ],
     })
-}
-
-fn upload_texture(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    source: &Texture,
-    label: &str,
-) -> Result<(wgpu::Texture, wgpu::TextureView), BindlessTextureError> {
-    validate_texture(device, source)?;
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some(label),
-        size: wgpu::Extent3d {
-            width: source.width,
-            height: source.height,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: source.format,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
-    let view = texture.create_view(&wgpu::TextureViewDescriptor {
-        label: Some(label),
-        format: Some(source.format),
-        dimension: Some(wgpu::TextureViewDimension::D2),
-        aspect: wgpu::TextureAspect::All,
-        base_mip_level: 0,
-        mip_level_count: Some(1),
-        base_array_layer: 0,
-        array_layer_count: Some(1),
-        usage: Some(wgpu::TextureUsages::TEXTURE_BINDING),
-    });
-    let row_size = usize::try_from(source.width)
-        .ok()
-        .and_then(|width| width.checked_mul(4))
-        .ok_or(BindlessTextureError::SizeOverflow {
-            width: source.width,
-            height: source.height,
-        })?;
-    let alignment = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
-    let padded_row_size = row_size
-        .checked_add(alignment - 1)
-        .map(|value| value / alignment * alignment)
-        .ok_or(BindlessTextureError::SizeOverflow {
-            width: source.width,
-            height: source.height,
-        })?;
-    let upload_size = padded_row_size.checked_mul(source.height as usize).ok_or(
-        BindlessTextureError::SizeOverflow {
-            width: source.width,
-            height: source.height,
-        },
-    )?;
-    let mut upload = Vec::new();
-    upload
-        .try_reserve_exact(upload_size)
-        .map_err(|_| BindlessTextureError::UploadAllocationFailed { bytes: upload_size })?;
-    upload.resize(upload_size, 0_u8);
-    for row in 0..source.height as usize {
-        let source_offset = row * row_size;
-        let target_offset = row * padded_row_size;
-        upload[target_offset..target_offset + row_size]
-            .copy_from_slice(&source.pixels[source_offset..source_offset + row_size]);
-    }
-    queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
-            texture: &texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        &upload,
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(u32::try_from(padded_row_size).map_err(|_| {
-                BindlessTextureError::SizeOverflow {
-                    width: source.width,
-                    height: source.height,
-                }
-            })?),
-            rows_per_image: Some(source.height),
-        },
-        texture.size(),
-    );
-    Ok((texture, view))
 }
 
 fn validate_texture(device: &wgpu::Device, source: &Texture) -> Result<(), BindlessTextureError> {
@@ -618,7 +580,16 @@ mod tests {
             },
             ..Default::default()
         });
-        let mut arena = BindlessTextureArena::new(&device, &queue, 8, 1, &[]).unwrap();
+        let mut arena = BindlessTextureArena::new(
+            &device,
+            &queue,
+            8,
+            1,
+            &[],
+            &[],
+            TextureSamplingConfig::default(),
+        )
+        .unwrap();
         let old = arena
             .insert(&device, &queue, &Texture::white_1x1())
             .unwrap();
@@ -653,7 +624,15 @@ mod tests {
             pixels: Vec::new(),
         };
         assert!(matches!(
-            BindlessTextureArena::new(&device, &queue, 4, 1, &[malformed]),
+            BindlessTextureArena::new(
+                &device,
+                &queue,
+                4,
+                1,
+                &[malformed],
+                &[],
+                TextureSamplingConfig::default(),
+            ),
             Err(BindlessTextureError::PixelSizeMismatch {
                 actual: 0,
                 expected: 4,
@@ -673,7 +652,16 @@ mod tests {
             },
             ..Default::default()
         });
-        let mut arena = BindlessTextureArena::new(&device, &queue, 4, 1, &[]).unwrap();
+        let mut arena = BindlessTextureArena::new(
+            &device,
+            &queue,
+            4,
+            1,
+            &[],
+            &[],
+            TextureSamplingConfig::default(),
+        )
+        .unwrap();
         let malformed = Texture {
             width: 1,
             height: 1,
@@ -700,13 +688,22 @@ mod tests {
             },
             ..Default::default()
         });
-        let mut arena = BindlessTextureArena::new(&device, &queue, 4, 2, &[]).unwrap();
+        let mut arena = BindlessTextureArena::new(
+            &device,
+            &queue,
+            4,
+            2,
+            &[],
+            &[],
+            TextureSamplingConfig::default(),
+        )
+        .unwrap();
         let old = arena
-            .insert_sampler(device.create_sampler(&wgpu::SamplerDescriptor::default()))
+            .insert_sampler(&device, TextureSampler::default())
             .unwrap();
         arena.remove_sampler(old).unwrap();
         let replacement = arena
-            .insert_sampler(device.create_sampler(&wgpu::SamplerDescriptor::default()))
+            .insert_sampler(&device, TextureSampler::default())
             .unwrap();
         assert_eq!(old.slot, replacement.slot);
         assert_ne!(old.generation, replacement.generation);

@@ -1,5 +1,5 @@
 use zen_render_mesh::{
-    MeshRenderer,
+    MeshRenderer, TextureSamplingConfig,
     meshlet::{
         MeshletCapabilities, MeshletCapabilityError, MeshletDeviceRequirements,
         MeshletRendererConfig,
@@ -35,6 +35,7 @@ pub struct MeshletDevice {
     pub requirements: MeshletDeviceRequirements,
     pub config: MeshletRendererConfig,
     pub adapter_info: wgpu::AdapterInfo,
+    pub sampling: TextureSamplingConfig,
 }
 
 /// Selects a Vulkan adapter, resolves `Auto`, and requests exactly the features/limits needed by
@@ -72,6 +73,7 @@ pub async fn request_vulkan_meshlet_device_configured(
     let info = adapter.get_info();
     configure(&info, &mut config).map_err(MeshletDeviceRequestError::Configuration)?;
     let capabilities = MeshletCapabilities::from_adapter(&adapter);
+    let sampling = interactive_sampling_config(&adapter);
     let requirements = capabilities.device_requirements(&config)?;
     let surface_capabilities = surface.get_capabilities(&adapter);
 
@@ -112,6 +114,7 @@ pub async fn request_vulkan_meshlet_device_configured(
         requirements,
         config,
         adapter_info: info,
+        sampling,
     })
 }
 
@@ -119,6 +122,7 @@ pub struct DemoDevice {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub adapter_info: wgpu::AdapterInfo,
+    pub sampling: TextureSamplingConfig,
 }
 
 /// Requests the legacy renderer on the same high-performance Vulkan adapter policy used by the
@@ -134,11 +138,11 @@ pub async fn request_vulkan_legacy_device(
 pub async fn request_device_and_queue(
     instance: &wgpu::Instance,
     surface: &wgpu::Surface<'_>,
-) -> (wgpu::Device, wgpu::Queue) {
+) -> (wgpu::Device, wgpu::Queue, TextureSamplingConfig) {
     let requested =
         request_device_and_queue_with_info(instance, surface, wgpu::PowerPreference::default())
             .await;
-    (requested.device, requested.queue)
+    (requested.device, requested.queue, requested.sampling)
 }
 
 pub async fn request_device_and_queue_with_info(
@@ -157,6 +161,7 @@ pub async fn request_device_and_queue_with_info(
         .expect("no graphics adapter supports the demo surface");
 
     let adapter_info = adapter.get_info();
+    let sampling = interactive_sampling_config(&adapter);
     println!("{adapter_info:?}");
     println!("{:?}", surface.get_capabilities(&adapter).formats);
 
@@ -182,6 +187,17 @@ pub async fn request_device_and_queue_with_info(
         device,
         queue,
         adapter_info,
+        sampling,
+    }
+}
+
+fn interactive_sampling_config(adapter: &wgpu::Adapter) -> TextureSamplingConfig {
+    let supported = adapter
+        .get_downlevel_capabilities()
+        .flags
+        .contains(wgpu::DownlevelFlags::ANISOTROPIC_FILTERING);
+    TextureSamplingConfig {
+        max_anisotropy: if supported { 16 } else { 1 },
     }
 }
 

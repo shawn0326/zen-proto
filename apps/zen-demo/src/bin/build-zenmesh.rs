@@ -25,6 +25,8 @@ enum BuildCliError {
     Asset(#[from] zen_demo::meshlet_support::MeshletAssetCacheError),
     #[error(transparent)]
     BuildConfig(#[from] zen_render_mesh::meshlet::MeshletAssetError),
+    #[error(transparent)]
+    Gltf(#[from] zen_demo::gltf_loader::GltfLoadError),
 }
 
 struct BuildArgs {
@@ -127,7 +129,7 @@ fn parse_args(arguments: impl IntoIterator<Item = OsString>) -> Result<BuildArgs
 fn run() -> Result<(), BuildCliError> {
     let arguments = parse_args(std::env::args_os().skip(1))?;
     arguments.config.validate()?;
-    let model = load_gltf(&arguments.input, arguments.loader);
+    let model = load_gltf(&arguments.input, arguments.loader)?;
     let meshes = raw_static_meshes(&model)?;
     let result = load_or_build_zenmesh(&arguments.output, &meshes, arguments.config)?;
     println!(

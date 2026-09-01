@@ -1,6 +1,9 @@
 use std::path::Path;
 
-use zen_render_mesh::{Instance, Material, Mesh, Texture, Vertex};
+use zen_render_mesh::{
+    Instance, Material, MaterialTextureBinding, Mesh, Texture, TextureAddressMode,
+    TextureMagFilter, TextureMinFilter, TextureSampler, Vertex,
+};
 
 pub struct LoadedGltfModel {
     pub meshes: Vec<Mesh>,
@@ -9,6 +12,27 @@ pub struct LoadedGltfModel {
     pub materials: Vec<Material>,
     pub instances: Vec<Instance>,
     pub textures: Vec<Texture>,
+    pub samplers: Vec<TextureSampler>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GltfLoadError {
+    #[error("failed to import glTF {path}: {source}")]
+    Import {
+        path: String,
+        #[source]
+        source: gltf::Error,
+    },
+    #[error("material {material} {slot} uses TEXCOORD_{tex_coord}; only TEXCOORD_0 is supported")]
+    UnsupportedTexCoord {
+        material: usize,
+        slot: &'static str,
+        tex_coord: u32,
+    },
+    #[error(
+        "KHR_texture_transform is not supported; refusing to render transformed UVs incorrectly"
+    )]
+    UnsupportedTextureTransform,
 }
 
 #[derive(Clone, Copy)]
@@ -42,10 +66,17 @@ impl Default for LoadGltfOptions {
     }
 }
 
-pub fn load_gltf(path: impl AsRef<Path>, options: LoadGltfOptions) -> LoadedGltfModel {
+pub fn load_gltf(
+    path: impl AsRef<Path>,
+    options: LoadGltfOptions,
+) -> Result<LoadedGltfModel, GltfLoadError> {
     let path = path.as_ref();
-    let (document, buffers, images) = gltf::import(path)
-        .unwrap_or_else(|e| panic!("Failed to import glTF {}: {e}", path.display()));
+    let (document, buffers, images) =
+        gltf::import(path).map_err(|source| GltfLoadError::Import {
+            path: path.display().to_string(),
+            source,
+        })?;
+    validate_supported_extensions(&document)?;
 
     let scene = document
         .default_scene()
@@ -68,34 +99,50 @@ pub fn load_gltf(path: impl AsRef<Path>, options: LoadGltfOptions) -> LoadedGltf
         let _ = i;
     }
 
+    // Reserve sampler 0 for the glTF default sampler. Explicit sampler objects remain a
+    // separate table, so two glTF textures can share an image but use different sampling.
+    let mut samplers = Vec::with_capacity(document.samplers().len() + 1);
+    samplers.push(TextureSampler::default());
+    samplers.extend(document.samplers().map(texture_sampler_from_gltf));
+    let texture_bindings = build_texture_bindings(&document, &texture_id_for_image);
+
     // Materials: baseColorFactor * baseColorTexture (if present).
     let mut materials: Vec<Material> = Vec::with_capacity(document.materials().len() + 1);
     for m in document.materials() {
+        let material_index = m.index().unwrap_or(materials.len());
         let pbr = m.pbr_metallic_roughness();
         let factor = pbr.base_color_factor();
-        let mut texture_id = 0u32;
-        if let Some(tex) = pbr.base_color_texture() {
-            let image_index = tex.texture().source().index();
-            texture_id = texture_id_for_image.get(image_index).copied().unwrap_or(0);
-        }
+        let albedo = texture_binding(
+            pbr.base_color_texture(),
+            &texture_bindings,
+            material_index,
+            "baseColorTexture",
+        )?;
 
         let emissive_factor = m.emissive_factor();
         let emissive_rgb =
             glam::Vec3::new(emissive_factor[0], emissive_factor[1], emissive_factor[2]);
 
         // If emissiveTexture is missing, fall back to white so emissive_factor can still work.
-        let mut emissive_texture_id = 0u32;
-        if let Some(info) = m.emissive_texture() {
-            let image_index = info.texture().source().index();
-            emissive_texture_id = texture_id_for_image.get(image_index).copied().unwrap_or(0);
-        }
+        let emissive = texture_binding(
+            m.emissive_texture(),
+            &texture_bindings,
+            material_index,
+            "emissiveTexture",
+        )?;
 
         // AO (occlusion) support
-        let mut ao_texture_id = 0u32;
+        let mut occlusion = MaterialTextureBinding::default();
         let mut ao_strength = 1.0f32;
         if let Some(occ) = m.occlusion_texture() {
-            let image_index = occ.texture().source().index();
-            ao_texture_id = texture_id_for_image.get(image_index).copied().unwrap_or(0);
+            if occ.tex_coord() != 0 {
+                return Err(GltfLoadError::UnsupportedTexCoord {
+                    material: material_index,
+                    slot: "occlusionTexture",
+                    tex_coord: occ.tex_coord(),
+                });
+            }
+            occlusion = texture_bindings[occ.texture().index()];
             ao_strength = occ.strength();
         }
 
@@ -105,7 +152,10 @@ pub fn load_gltf(path: impl AsRef<Path>, options: LoadGltfOptions) -> LoadedGltf
         materials.push(Material {
             albedo_factor: glam::Vec4::new(factor[0], factor[1], factor[2], factor[3]),
             emissive_ao,
-            tex_ids: [texture_id, emissive_texture_id, ao_texture_id, 0],
+            albedo,
+            emissive,
+            occlusion,
+            _padding: [0; 2],
         });
     }
 
@@ -114,7 +164,10 @@ pub fn load_gltf(path: impl AsRef<Path>, options: LoadGltfOptions) -> LoadedGltf
         materials.push(Material {
             albedo_factor: glam::Vec4::ONE,
             emissive_ao: glam::Vec4::new(0.0, 0.0, 0.0, 1.0),
-            tex_ids: [0, 0, 0, 0],
+            albedo: MaterialTextureBinding::default(),
+            emissive: MaterialTextureBinding::default(),
+            occlusion: MaterialTextureBinding::default(),
+            _padding: [0; 2],
         });
         0u32
     } else {
@@ -123,7 +176,10 @@ pub fn load_gltf(path: impl AsRef<Path>, options: LoadGltfOptions) -> LoadedGltf
         materials.push(Material {
             albedo_factor: glam::Vec4::ONE,
             emissive_ao: glam::Vec4::new(0.0, 0.0, 0.0, 1.0),
-            tex_ids: [0, 0, 0, 0],
+            albedo: MaterialTextureBinding::default(),
+            emissive: MaterialTextureBinding::default(),
+            occlusion: MaterialTextureBinding::default(),
+            _padding: [0; 2],
         });
         id
     };
@@ -142,12 +198,90 @@ pub fn load_gltf(path: impl AsRef<Path>, options: LoadGltfOptions) -> LoadedGltf
         );
     }
 
-    LoadedGltfModel {
+    Ok(LoadedGltfModel {
         meshes: loaded.meshes,
         mesh_surfaces: loaded.mesh_surfaces,
         materials,
         instances: loaded.instances,
         textures,
+        samplers,
+    })
+}
+
+fn validate_supported_extensions(document: &gltf::Document) -> Result<(), GltfLoadError> {
+    if document
+        .extensions_used()
+        .any(|extension| extension == "KHR_texture_transform")
+    {
+        return Err(GltfLoadError::UnsupportedTextureTransform);
+    }
+    Ok(())
+}
+
+fn build_texture_bindings(
+    document: &gltf::Document,
+    texture_id_for_image: &[u32],
+) -> Vec<MaterialTextureBinding> {
+    document
+        .textures()
+        .map(|texture| MaterialTextureBinding {
+            texture_id: texture_id_for_image[texture.source().index()],
+            sampler_id: texture
+                .sampler()
+                .index()
+                .map_or(0, |index| index as u32 + 1),
+        })
+        .collect()
+}
+
+fn texture_binding(
+    info: Option<gltf::texture::Info<'_>>,
+    texture_bindings: &[MaterialTextureBinding],
+    material: usize,
+    slot: &'static str,
+) -> Result<MaterialTextureBinding, GltfLoadError> {
+    let Some(info) = info else {
+        return Ok(MaterialTextureBinding::default());
+    };
+    if info.tex_coord() != 0 {
+        return Err(GltfLoadError::UnsupportedTexCoord {
+            material,
+            slot,
+            tex_coord: info.tex_coord(),
+        });
+    }
+    Ok(texture_bindings[info.texture().index()])
+}
+
+fn texture_sampler_from_gltf(sampler: gltf::texture::Sampler<'_>) -> TextureSampler {
+    let address = |mode| match mode {
+        gltf::texture::WrappingMode::ClampToEdge => TextureAddressMode::ClampToEdge,
+        gltf::texture::WrappingMode::Repeat => TextureAddressMode::Repeat,
+        gltf::texture::WrappingMode::MirroredRepeat => TextureAddressMode::MirroredRepeat,
+    };
+    let mag_filter = match sampler
+        .mag_filter()
+        .unwrap_or(gltf::texture::MagFilter::Linear)
+    {
+        gltf::texture::MagFilter::Nearest => TextureMagFilter::Nearest,
+        gltf::texture::MagFilter::Linear => TextureMagFilter::Linear,
+    };
+    let min_filter = match sampler
+        .min_filter()
+        .unwrap_or(gltf::texture::MinFilter::LinearMipmapLinear)
+    {
+        gltf::texture::MinFilter::Nearest => TextureMinFilter::Nearest,
+        gltf::texture::MinFilter::Linear => TextureMinFilter::Linear,
+        gltf::texture::MinFilter::NearestMipmapNearest => TextureMinFilter::NearestMipmapNearest,
+        gltf::texture::MinFilter::LinearMipmapNearest => TextureMinFilter::LinearMipmapNearest,
+        gltf::texture::MinFilter::NearestMipmapLinear => TextureMinFilter::NearestMipmapLinear,
+        gltf::texture::MinFilter::LinearMipmapLinear => TextureMinFilter::LinearMipmapLinear,
+    };
+    TextureSampler {
+        address_mode_u: address(sampler.wrap_s()),
+        address_mode_v: address(sampler.wrap_t()),
+        mag_filter,
+        min_filter,
     }
 }
 
@@ -449,4 +583,165 @@ fn convert_gltf_image_to_rgba8(img: &gltf::image::Data) -> (Vec<u8>, u32, u32) {
     );
 
     (rgba, width, height)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_document(json: &str) -> gltf::Document {
+        gltf::Gltf::from_slice(json.as_bytes()).unwrap().document
+    }
+
+    #[test]
+    fn sampler_wrap_and_all_min_filters_map_exactly() {
+        let document = parse_document(
+            r#"{
+                "asset":{"version":"2.0"},
+                "samplers":[
+                    {"wrapS":33071,"wrapT":10497,"magFilter":9728,"minFilter":9728},
+                    {"wrapS":33648,"wrapT":33071,"magFilter":9729,"minFilter":9729},
+                    {"minFilter":9984},{"minFilter":9985},{"minFilter":9986},{"minFilter":9987}
+                ]
+            }"#,
+        );
+        let actual = document
+            .samplers()
+            .map(texture_sampler_from_gltf)
+            .collect::<Vec<_>>();
+        assert_eq!(actual[0].address_mode_u, TextureAddressMode::ClampToEdge);
+        assert_eq!(actual[0].address_mode_v, TextureAddressMode::Repeat);
+        assert_eq!(actual[0].mag_filter, TextureMagFilter::Nearest);
+        assert_eq!(actual[1].address_mode_u, TextureAddressMode::MirroredRepeat);
+        assert_eq!(actual[1].address_mode_v, TextureAddressMode::ClampToEdge);
+        assert_eq!(actual[1].mag_filter, TextureMagFilter::Linear);
+        assert_eq!(
+            actual
+                .iter()
+                .map(|sampler| sampler.min_filter)
+                .collect::<Vec<_>>(),
+            [
+                TextureMinFilter::Nearest,
+                TextureMinFilter::Linear,
+                TextureMinFilter::NearestMipmapNearest,
+                TextureMinFilter::LinearMipmapNearest,
+                TextureMinFilter::NearestMipmapLinear,
+                TextureMinFilter::LinearMipmapLinear,
+            ]
+        );
+    }
+
+    #[test]
+    fn omitted_and_empty_samplers_use_gltf_defaults() {
+        let document = parse_document(
+            r#"{
+                "asset":{"version":"2.0"},
+                "images":[{"uri":"unused.png"}],
+                "samplers":[{}],
+                "textures":[{"source":0},{"source":0,"sampler":0}]
+            }"#,
+        );
+        let bindings = build_texture_bindings(&document, &[9]);
+        assert_eq!(
+            bindings[0],
+            MaterialTextureBinding {
+                texture_id: 9,
+                sampler_id: 0
+            }
+        );
+        assert_eq!(
+            bindings[1],
+            MaterialTextureBinding {
+                texture_id: 9,
+                sampler_id: 1
+            }
+        );
+        assert_eq!(
+            texture_sampler_from_gltf(document.samplers().next().unwrap()),
+            TextureSampler::default()
+        );
+    }
+
+    #[test]
+    fn one_image_can_be_reused_with_distinct_samplers() {
+        let document = parse_document(
+            r#"{
+                "asset":{"version":"2.0"},
+                "images":[{"uri":"unused.png"}],
+                "samplers":[{"wrapS":10497},{"wrapS":33071}],
+                "textures":[{"source":0,"sampler":0},{"source":0,"sampler":1}]
+            }"#,
+        );
+        let bindings = build_texture_bindings(&document, &[3]);
+        assert_eq!(bindings[0].texture_id, bindings[1].texture_id);
+        assert_ne!(bindings[0].sampler_id, bindings[1].sampler_id);
+    }
+
+    #[test]
+    fn nonzero_texcoord_and_texture_transform_are_rejected() {
+        let document = parse_document(
+            r#"{
+                "asset":{"version":"2.0"},
+                "images":[{"uri":"unused.png"}],
+                "textures":[{"source":0}],
+                "materials":[{"pbrMetallicRoughness":{"baseColorTexture":{"index":0,"texCoord":1}}}]
+            }"#,
+        );
+        let info = document
+            .materials()
+            .next()
+            .unwrap()
+            .pbr_metallic_roughness()
+            .base_color_texture();
+        assert!(matches!(
+            texture_binding(
+                info,
+                &[MaterialTextureBinding::default()],
+                0,
+                "baseColorTexture"
+            ),
+            Err(GltfLoadError::UnsupportedTexCoord { tex_coord: 1, .. })
+        ));
+
+        let document = parse_document(
+            r#"{
+                "asset":{"version":"2.0"},
+                "extensionsUsed":["KHR_texture_transform"]
+            }"#,
+        );
+        assert!(matches!(
+            validate_supported_extensions(&document),
+            Err(GltfLoadError::UnsupportedTextureTransform)
+        ));
+    }
+
+    #[test]
+    fn damaged_helmet_keeps_repeat_sampling_for_its_out_of_range_uvs() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("assets")
+            .join("DamagedHelmet")
+            .join("glTF")
+            .join("DamagedHelmet.gltf");
+        let model = load_gltf(
+            path,
+            LoadGltfOptions {
+                global_scale: 1.0,
+                flip_v: false,
+                bake_node_transform: false,
+            },
+        )
+        .unwrap();
+        let albedo = model.materials[0].albedo;
+        let sampler = model.samplers[albedo.sampler_id as usize];
+        assert_eq!(sampler.address_mode_u, TextureAddressMode::Repeat);
+        assert_eq!(sampler.address_mode_v, TextureAddressMode::Repeat);
+        assert!(
+            model
+                .meshes
+                .iter()
+                .flat_map(|mesh| &mesh.vertices)
+                .any(|vertex| vertex.uv.y > 1.0),
+            "fixture must retain the UV range that exposed clamp-induced atlas streaking"
+        );
+    }
 }

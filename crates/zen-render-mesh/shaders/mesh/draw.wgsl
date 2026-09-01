@@ -14,8 +14,10 @@ struct Material {
     albedo_factor: vec4f,
     // xyz: emissive factor, w: occlusion strength
     emissive_ao: vec4f,
-    // x: albedo tex id, y: emissive tex id, z: occlusion tex id, w: reserved
-    tex_ids: vec4u,
+    albedo: vec2u,
+    emissive: vec2u,
+    occlusion: vec2u,
+    _padding: vec2u,
 }
 
 struct InstanceData {
@@ -36,7 +38,7 @@ struct Camera {
 @group(0) @binding(3) var<uniform> camera: Camera;
 
 @group(1) @binding(0) var textures: binding_array<texture_2d<f32>>;
-@group(1) @binding(1) var tex_sampler: sampler;
+@group(1) @binding(1) var samplers: binding_array<sampler>;
 
 struct VsOut {
     @builtin(position) pos: vec4f,
@@ -131,17 +133,19 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     let world_normal = normalize_or(in.normal, vec3f(0.0, 0.0, 1.0));
 
     let material = materials[in.material_id];
-    let albedo_tex_id = material.tex_ids.x;
-    let emissive_tex_id = material.tex_ids.y;
-    let occlusion_tex_id = material.tex_ids.z;
-
     let vertex_albedo = in.color * material.albedo_factor;
-    let albedo = textureSample(textures[albedo_tex_id], tex_sampler, in.uv) * vertex_albedo;
+    let albedo = textureSample(
+        textures[material.albedo.x], samplers[material.albedo.y], in.uv
+    ) * vertex_albedo;
 
-    let emission = textureSample(textures[emissive_tex_id], tex_sampler, in.uv).rgb
+    let emission = textureSample(
+        textures[material.emissive.x], samplers[material.emissive.y], in.uv
+    ).rgb
         * material.emissive_ao.rgb;
 
-    let ao_tex = textureSample(textures[occlusion_tex_id], tex_sampler, in.uv).r;
+    let ao_tex = textureSample(
+        textures[material.occlusion.x], samplers[material.occlusion.y], in.uv
+    ).r;
     let ao = clamp(ao_tex * material.emissive_ao.w, 0.0, 1.0);
 
     let n_dot_l = max(dot(world_normal, light_dir), 0.0);

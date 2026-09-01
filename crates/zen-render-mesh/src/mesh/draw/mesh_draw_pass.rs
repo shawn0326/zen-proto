@@ -135,6 +135,11 @@ impl MeshDrawPass {
         let max_texture_count = texture_storage
             .max_texture_count()
             .min(device.limits().max_binding_array_elements_per_shader_stage);
+        let max_sampler_count = texture_storage.max_sampler_count().min(
+            device
+                .limits()
+                .max_binding_array_sampler_elements_per_shader_stage,
+        );
 
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -151,17 +156,18 @@ impl MeshDrawPass {
                         },
                         count: std::num::NonZeroU32::new(max_texture_count),
                     },
-                    // shared sampler
+                    // bindless samplers
                     wgpu::BindGroupLayoutEntry {
                         binding: 1,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
+                        count: std::num::NonZeroU32::new(max_sampler_count),
                     },
                 ],
             });
 
         let view_refs: Vec<&wgpu::TextureView> = texture_storage.texture_views().iter().collect();
+        let sampler_refs: Vec<&wgpu::Sampler> = texture_storage.samplers().iter().collect();
         let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("draw.textures.bindless_bg"),
             layout: &texture_bind_group_layout,
@@ -172,7 +178,7 @@ impl MeshDrawPass {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(texture_storage.sampler()),
+                    resource: wgpu::BindingResource::SamplerArray(&sampler_refs),
                 },
             ],
         });

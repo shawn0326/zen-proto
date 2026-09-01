@@ -2,7 +2,10 @@ use crate::camera::Camera;
 use crate::mesh::{
     draw::MeshPassSet,
     frame::{MeshGraphRecorder, MeshRenderTargets, PreparedMeshFrame},
-    scene::{Instance, Material, Mesh, MeshGpuScene, Texture},
+    scene::{
+        Instance, Material, MaterialTextureBinding, Mesh, MeshGpuScene, Texture,
+        TextureResourceError, TextureSampler, TextureSamplingConfig,
+    },
     stats::{MeshRenderStats, MeshStatsReadback},
     visibility::{HiZStage, MeshVisibilityState},
 };
@@ -23,6 +26,30 @@ pub struct MeshRenderer {
     stats: MeshStatsReadback,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum MeshRendererError {
+    #[error(transparent)]
+    TextureResource(#[from] TextureResourceError),
+    #[error(
+        "material {material_index} {slot} texture index {texture_id} is out of range for {texture_count} textures"
+    )]
+    InvalidMaterialTexture {
+        material_index: usize,
+        slot: &'static str,
+        texture_id: u32,
+        texture_count: usize,
+    },
+    #[error(
+        "material {material_index} {slot} sampler index {sampler_id} is out of range for {sampler_count} samplers"
+    )]
+    InvalidMaterialSampler {
+        material_index: usize,
+        slot: &'static str,
+        sampler_id: u32,
+        sampler_count: usize,
+    },
+}
+
 impl MeshRenderer {
     /// WebGPU features required by the Mesh renderer.
     pub fn required_features() -> wgpu::Features {
@@ -38,6 +65,8 @@ impl MeshRenderer {
         wgpu::Limits {
             max_binding_array_elements_per_shader_stage: 1024
                 .min(adapter_limits.max_binding_array_elements_per_shader_stage),
+            max_binding_array_sampler_elements_per_shader_stage: 32
+                .min(adapter_limits.max_binding_array_sampler_elements_per_shader_stage),
             ..Default::default()
         }
     }
@@ -50,19 +79,34 @@ impl MeshRenderer {
         materials: &[Material],
         instances: &[Instance],
         textures: &[Texture],
-    ) -> Self {
-        let scene = MeshGpuScene::new(device, queue, meshes, materials, instances, textures);
+        samplers: &[TextureSampler],
+        sampling: TextureSamplingConfig,
+    ) -> Result<Self, MeshRendererError> {
+        let texture_count = textures.len().max(1);
+        let sampler_count = samplers.len().max(1);
+        for (material_index, material) in materials.iter().enumerate() {
+            for (slot, binding) in [
+                ("albedo", material.albedo),
+                ("emissive", material.emissive),
+                ("occlusion", material.occlusion),
+            ] {
+                validate_binding(material_index, slot, binding, texture_count, sampler_count)?;
+            }
+        }
+        let scene = MeshGpuScene::new(
+            device, queue, meshes, materials, instances, textures, samplers, sampling,
+        )?;
         let max_instance_count = scene.instances().instance_count();
         let visibility = MeshVisibilityState::new(device, max_instance_count);
         let passes = MeshPassSet::new(device, color_format, &scene, &visibility);
 
-        Self {
+        Ok(Self {
             scene,
             visibility,
             hiz_stage: HiZStage::new(device),
             passes,
             stats: MeshStatsReadback::new(device),
-        }
+        })
     }
 
     pub fn request_stats(&mut self) {
@@ -134,9 +178,75 @@ impl MeshRenderer {
     pub fn after_discard(&mut self, _prepared: PreparedMeshFrame) {}
 }
 
+fn validate_binding(
+    material_index: usize,
+    slot: &'static str,
+    binding: MaterialTextureBinding,
+    texture_count: usize,
+    sampler_count: usize,
+) -> Result<(), MeshRendererError> {
+    if binding.texture_id as usize >= texture_count {
+        return Err(MeshRendererError::InvalidMaterialTexture {
+            material_index,
+            slot,
+            texture_id: binding.texture_id,
+            texture_count,
+        });
+    }
+    if binding.sampler_id as usize >= sampler_count {
+        return Err(MeshRendererError::InvalidMaterialSampler {
+            material_index,
+            slot,
+            sampler_id: binding.sampler_id,
+            sampler_count,
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn material_resource_validation_reports_texture_and_sampler_slots() {
+        assert!(matches!(
+            validate_binding(
+                3,
+                "emissive",
+                MaterialTextureBinding {
+                    texture_id: 2,
+                    sampler_id: 0,
+                },
+                2,
+                1,
+            ),
+            Err(MeshRendererError::InvalidMaterialTexture {
+                material_index: 3,
+                slot: "emissive",
+                texture_id: 2,
+                ..
+            })
+        ));
+        assert!(matches!(
+            validate_binding(
+                4,
+                "occlusion",
+                MaterialTextureBinding {
+                    texture_id: 0,
+                    sampler_id: 5,
+                },
+                1,
+                5,
+            ),
+            Err(MeshRendererError::InvalidMaterialSampler {
+                material_index: 4,
+                slot: "occlusion",
+                sampler_id: 5,
+                ..
+            })
+        ));
+    }
 
     #[test]
     fn discarded_frame_keeps_the_stats_request_for_the_next_prepare() {
@@ -144,6 +254,7 @@ mod tests {
             required_features: MeshRenderer::required_features(),
             required_limits: wgpu::Limits {
                 max_binding_array_elements_per_shader_stage: 16,
+                max_binding_array_sampler_elements_per_shader_stage: 4,
                 ..Default::default()
             },
             ..Default::default()
@@ -156,7 +267,10 @@ mod tests {
             &[],
             &[],
             &[],
-        );
+            &[],
+            TextureSamplingConfig::default(),
+        )
+        .unwrap();
         let input = MeshRenderInput {
             camera: Camera::default(),
             debug_camera: None,

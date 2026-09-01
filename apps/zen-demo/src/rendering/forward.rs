@@ -115,12 +115,24 @@ mod tests {
             required_features: MeshRenderer::required_features(),
             required_limits: wgpu::Limits {
                 max_binding_array_elements_per_shader_stage: 16,
+                max_binding_array_sampler_elements_per_shader_stage: 4,
                 ..Default::default()
             },
             ..Default::default()
         });
         let format = wgpu::TextureFormat::Bgra8UnormSrgb;
-        let mesh = MeshRenderer::new(&device, &queue, format, &[], &[], &[], &[]);
+        let mesh = MeshRenderer::new(
+            &device,
+            &queue,
+            format,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            zen_render_mesh::TextureSamplingConfig::default(),
+        )
+        .unwrap();
         let composer = ForwardFrameComposer::new(mesh, format);
         let mut host = RenderHost::new(&device, composer);
         let surface = device.create_texture(&wgpu::TextureDescriptor {

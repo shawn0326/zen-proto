@@ -12,7 +12,8 @@ use zen_demo::{
 };
 use zen_render::{GpuTimingReport, RenderFrameInput};
 use zen_render_mesh::{
-    Camera, Instance, Material, Mesh, MeshRenderInput, MeshRenderer, PerspectiveProjection, Texture,
+    Camera, Instance, Material, MaterialTextureBinding, Mesh, MeshRenderInput, MeshRenderer,
+    PerspectiveProjection, Texture,
 };
 
 struct Demo {
@@ -37,7 +38,7 @@ impl Example for Demo {
         let instance = wgpu::Instance::default();
         let size = window.inner_size();
         let surface = instance.create_surface(window).unwrap();
-        let (device, queue) = request_device_and_queue(&instance, &surface).await;
+        let (device, queue, sampling) = request_device_and_queue(&instance, &surface).await;
         let surface = SurfaceState::new(&device, surface, size.width, size.height);
         let projection = PerspectiveProjection {
             aspect: surface.width() as f32 / surface.height() as f32,
@@ -105,8 +106,13 @@ impl Example for Demo {
                 albedo_factor: glam::Vec4::new(r + m, g + m, b + m, 1.0),
                 // emissive rgb + ao_strength in w
                 emissive_ao: glam::Vec4::new(0.0, 0.0, 0.0, 1.0),
-                // albedo/emissive/ao; fall back to white (0)
-                tex_ids: [i % textures_count, 0, 0, 0],
+                albedo: MaterialTextureBinding {
+                    texture_id: i % textures_count,
+                    sampler_id: 0,
+                },
+                emissive: MaterialTextureBinding::default(),
+                occlusion: MaterialTextureBinding::default(),
+                _padding: [0; 2],
             });
         }
 
@@ -134,7 +140,10 @@ impl Example for Demo {
             &materials,
             &instances,
             &textures,
-        );
+            &[],
+            sampling,
+        )
+        .expect("basic scene resources must fit renderer limits");
         let composer = ForwardFrameComposer::new(mesh, surface.format());
         let render_host = ForwardRenderHost::new(&device, composer);
         Demo {

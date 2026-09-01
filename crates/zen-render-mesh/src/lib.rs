@@ -10,8 +10,10 @@ pub mod meshlet;
 
 pub use camera::{Camera, OrthographicProjection, PerspectiveProjection};
 pub use mesh::{
-    Instance, Material, Mesh, MeshRenderInput, MeshRenderStats, MeshRenderTargets, MeshRenderer,
-    PreparedMeshFrame, Texture, Vertex,
+    Instance, Material, MaterialTextureBinding, Mesh, MeshRenderInput, MeshRenderStats,
+    MeshRenderTargets, MeshRenderer, MeshRendererError, PreparedMeshFrame, Texture,
+    TextureAddressMode, TextureMagFilter, TextureMinFilter, TextureResourceError, TextureSampler,
+    TextureSamplingConfig, Vertex,
 };
 pub use meshlet::{
     BindlessTextureError, BoundsSphere, FallbackTextureHandles, LodTableEntry, MeshTableEntry,
@@ -48,22 +50,26 @@ mod tests {
     fn device_limits_respect_the_adapter_binding_array_limit() {
         let adapter_limits = wgpu::Limits {
             max_binding_array_elements_per_shader_stage: 64,
+            max_binding_array_sampler_elements_per_shader_stage: 12,
             ..Default::default()
         };
+        let limits = MeshRenderer::required_limits(&adapter_limits);
+        assert_eq!(limits.max_binding_array_elements_per_shader_stage, 64);
         assert_eq!(
-            MeshRenderer::required_limits(&adapter_limits)
-                .max_binding_array_elements_per_shader_stage,
-            64
+            limits.max_binding_array_sampler_elements_per_shader_stage,
+            12
         );
 
         let adapter_limits = wgpu::Limits {
             max_binding_array_elements_per_shader_stage: 2048,
+            max_binding_array_sampler_elements_per_shader_stage: 64,
             ..Default::default()
         };
+        let limits = MeshRenderer::required_limits(&adapter_limits);
+        assert_eq!(limits.max_binding_array_elements_per_shader_stage, 1024);
         assert_eq!(
-            MeshRenderer::required_limits(&adapter_limits)
-                .max_binding_array_elements_per_shader_stage,
-            1024
+            limits.max_binding_array_sampler_elements_per_shader_stage,
+            32
         );
     }
 }

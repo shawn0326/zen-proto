@@ -18,7 +18,7 @@ pub const ZENMESH_VERSION: u32 = 1;
 ///
 /// Increment this whenever an implementation change can alter generated LODs or meshlets. It is
 /// included in [`MeshletBuildConfig::build_hash`], so stale caches are rejected automatically.
-pub const MESHLET_BUILDER_REVISION: u32 = 1;
+pub const MESHLET_BUILDER_REVISION: u32 = 2;
 
 /// Stable 128-bit content identity used by the cache protocol.
 ///
@@ -917,6 +917,8 @@ mod tests {
         assert_eq!(config.task_packet_meshlets, 32);
         assert_eq!(config.lod_target_ratio, 0.5);
         assert_eq!(config.min_lod_triangles, 128);
+        assert_eq!(ZENMESH_VERSION, 1);
+        assert_eq!(MESHLET_BUILDER_REVISION, 2);
     }
 
     #[test]
@@ -1053,6 +1055,91 @@ mod tests {
             assert!(pair[1].index_count < pair[0].index_count);
             assert!(pair[1].geometric_error >= pair[0].geometric_error);
         }
+    }
+
+    #[test]
+    fn lod_vertices_preserve_uv_normal_and_color_associations() {
+        let side = 18u32;
+        let mut mesh = RawStaticMesh::new(Vec::new(), Vec::new());
+        for y in 0..=side {
+            for x in 0..=side {
+                mesh.positions.push([x as f32, y as f32, 0.0]);
+                mesh.normals.push(if x <= side / 2 {
+                    [0.0, 0.0, 1.0]
+                } else {
+                    [0.0, 1.0, 0.0]
+                });
+                mesh.tex_coords.push([
+                    x as f32 / side as f32 + f32::from(x > side / 2),
+                    y as f32 / side as f32,
+                ]);
+                mesh.colors.push(if y <= side / 2 {
+                    [1.0, 0.0, 0.0, 1.0]
+                } else {
+                    [0.0, 1.0, 0.0, 1.0]
+                });
+            }
+        }
+        let stride = side + 1;
+        for y in 0..side {
+            for x in 0..side {
+                let a = y * stride + x;
+                let b = a + 1;
+                let c = a + stride;
+                let d = c + 1;
+                mesh.indices.extend_from_slice(&[a, b, c, b, d, c]);
+            }
+        }
+        let source_pairs = mesh
+            .positions
+            .iter()
+            .copied()
+            .zip(
+                mesh.normals
+                    .iter()
+                    .copied()
+                    .zip(mesh.tex_coords.iter().copied())
+                    .zip(mesh.colors.iter().copied())
+                    .map(|((normal, uv), color)| {
+                        PackedVertexAttributes::from_components(normal, uv, color)
+                    }),
+            )
+            .collect::<Vec<_>>();
+        let asset = MeshletSceneAsset::build(
+            &[mesh],
+            MeshletBuildConfig {
+                max_lods: 4,
+                min_lod_triangles: 32,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(asset.lods().len() >= 2);
+        for lod in asset.lods() {
+            let range = lod.first_vertex as usize..(lod.first_vertex + lod.vertex_count) as usize;
+            for index in range {
+                assert!(
+                    source_pairs.iter().any(|pair| {
+                        pair.0 == asset.positions[index] && pair.1 == asset.attributes[index]
+                    }),
+                    "LOD introduced an averaged or mismatched vertex attribute"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lod_generation_stops_when_topology_cannot_be_safely_reduced() {
+        let asset = MeshletSceneAsset::build(
+            &[triangle()],
+            MeshletBuildConfig {
+                max_lods: 8,
+                min_lod_triangles: 1,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(asset.lods().len(), 1);
     }
 
     #[test]

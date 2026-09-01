@@ -255,6 +255,7 @@ mod tests {
                 | wgpu::Features::INDIRECT_FIRST_INSTANCE,
             required_limits: wgpu::Limits {
                 max_binding_array_elements_per_shader_stage: 16,
+                max_binding_array_sampler_elements_per_shader_stage: 4,
                 ..Default::default()
             },
             ..Default::default()
@@ -267,7 +268,10 @@ mod tests {
         let materials = [Material {
             albedo_factor: glam::Vec4::ONE,
             emissive_ao: glam::Vec4::W,
-            tex_ids: [0; 4],
+            albedo: Default::default(),
+            emissive: Default::default(),
+            occlusion: Default::default(),
+            _padding: [0; 2],
         }];
         let instances = [Instance {
             transform: glam::Mat4::IDENTITY,
@@ -276,7 +280,17 @@ mod tests {
             _pad: [0; 2],
         }];
         let textures = [Texture::white_1x1()];
-        let scene = MeshGpuScene::new(&device, &queue, &meshes, &materials, &instances, &textures);
+        let scene = MeshGpuScene::new(
+            &device,
+            &queue,
+            &meshes,
+            &materials,
+            &instances,
+            &textures,
+            &[],
+            crate::TextureSamplingConfig::default(),
+        )
+        .unwrap();
         let visibility = MeshVisibilityState::new(&device, 1);
         let hiz_stage = HiZStage::new(&device);
         let passes = MeshPassSet::new(

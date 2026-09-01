@@ -28,11 +28,14 @@ fn create_non_empty_buffer_init<T: bytemuck::Pod + bytemuck::Zeroable>(
 
 pub use geometry::{Mesh, Vertex};
 pub use instance::Instance;
-pub use material::Material;
-pub use texture::Texture;
+pub use material::{Material, MaterialTextureBinding};
+pub use texture::{
+    Texture, TextureAddressMode, TextureMagFilter, TextureMinFilter, TextureResourceError,
+    TextureSampler, TextureSamplingConfig,
+};
 
 pub(crate) use geometry::{MeshStorage, VertexPacked};
 pub(crate) use gpu_scene::MeshGpuScene;
 pub(crate) use instance::InstanceStorage;
 pub(crate) use material::MaterialStorage;
-pub(crate) use texture::TextureStorage;
+pub(crate) use texture::{TextureStorage, TextureUploader};
