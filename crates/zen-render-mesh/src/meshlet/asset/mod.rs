@@ -75,8 +75,8 @@ pub struct MeshletBuildConfig {
     pub max_meshlet_vertices: u32,
     /// Maximum triangles in one meshlet.
     pub max_meshlet_triangles: u32,
-    /// Maximum number of meshlets grouped into one task-shader packet.
-    pub task_packet_meshlets: u32,
+    /// Mesh children emitted by one task workgroup. Must match the task/mesh shader contract.
+    pub task_workgroup_meshlets: u32,
     /// Meshoptimizer clustering tradeoff between locality and normal-cone quality.
     pub meshlet_cone_weight: f32,
     /// Maximum number of LODs including LOD0. Set to one to disable simplification.
@@ -92,7 +92,7 @@ impl Default for MeshletBuildConfig {
         Self {
             max_meshlet_vertices: 64,
             max_meshlet_triangles: 64,
-            task_packet_meshlets: 32,
+            task_workgroup_meshlets: 32,
             meshlet_cone_weight: 0.5,
             max_lods: 8,
             lod_target_ratio: 0.5,
@@ -113,9 +113,9 @@ impl MeshletBuildConfig {
                 "max_meshlet_triangles must be in 1..=256".into(),
             ));
         }
-        if !(1..=32).contains(&self.task_packet_meshlets) {
+        if !(1..=32).contains(&self.task_workgroup_meshlets) {
             return Err(MeshletAssetError::InvalidConfig(
-                "task_packet_meshlets must be in 1..=32".into(),
+                "task_workgroup_meshlets must be in 1..=32".into(),
             ));
         }
         if !self.meshlet_cone_weight.is_finite() || !(0.0..=1.0).contains(&self.meshlet_cone_weight)
@@ -151,7 +151,7 @@ impl MeshletBuildConfig {
         hasher.write_u32(MESHLET_BUILDER_REVISION);
         hasher.write_u32(self.max_meshlet_vertices);
         hasher.write_u32(self.max_meshlet_triangles);
-        hasher.write_u32(self.task_packet_meshlets);
+        hasher.write_u32(self.task_workgroup_meshlets);
         hasher.write_u32(self.meshlet_cone_weight.to_bits());
         hasher.write_u32(self.max_lods);
         hasher.write_u32(self.lod_target_ratio.to_bits());
@@ -914,7 +914,7 @@ mod tests {
         config.validate().unwrap();
         assert_eq!(config.max_meshlet_vertices, 64);
         assert_eq!(config.max_meshlet_triangles, 64);
-        assert_eq!(config.task_packet_meshlets, 32);
+        assert_eq!(config.task_workgroup_meshlets, 32);
         assert_eq!(config.lod_target_ratio, 0.5);
         assert_eq!(config.min_lod_triangles, 128);
         assert_eq!(ZENMESH_VERSION, 1);

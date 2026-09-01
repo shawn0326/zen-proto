@@ -34,14 +34,20 @@ cargo run -p zen-demo --bin build-zenmesh -- scene.gltf -o scene.zenmesh
 The development loader verifies the v1 header, every section checksum, source/build hashes and
 topology ranges. Missing, stale or corrupt entries are rebuilt and atomically replaced.
 
-`indexed`, `mesh`, and `task-mesh` share the same compute-produced visibility list. The current
-Vulkan mesh paths use a per-bin GPU atomic to assign unique visible work because mesh-stage
-workgroup/global IDs are not reliable on the validated wgpu 30/Naga 30 NVIDIA path. `task-mesh`
-also uses a fixed 32-child fanout because dynamic task child counts are unreliable. Empty bins
-dispatch zero work; rectangular and fixed-fanout tails repeat the last visible meshlet. The
-benchmark measures this compatibility overhead, and `auto` still requires a matching local
-promotion profile. Reported output vertex/primitive counts describe logical visible geometry and
-exclude repeated compatibility-tail work.
+The authoritative feature, limit, driver-baseline, and known-issue documentation lives in
+[`crates/zen-render-mesh/README.md`](../../crates/zen-render-mesh/README.md). Before using an
+experimental backend on a new adapter/driver, run:
+
+```text
+cargo test -p zen-render-mesh --test vulkan_mesh_shader_probe
+cargo test -p zen-render-mesh --test vulkan_mesh_shader_probe -- --ignored --nocapture
+cargo test -p zen-render-mesh --test vulkan_meshlet_smoke -- --ignored --nocapture
+```
+
+If IndexedIndirect works but either experimental backend fails, keep using `--renderer indexed`,
+capture the adapter name/driver info printed by the probe, and do not generate an Auto profile for
+that driver. Validation-layer complaints involving task/mesh resource visibility should also be
+checked against the local `wgpu-hal 30.0.1` barrier patch described by the authoritative README.
 
 ## Fixed benchmark
 
@@ -49,11 +55,12 @@ Each run renders to an offscreen 1920x1080 target, uses the versioned determinis
 warms up for 120 frames, collects 600 GPU timestamp samples, writes JSON, and exits. Debug groups
 are enabled for RenderDoc/Nsight/RGP captures. `--geometry-bound` is an explicit assertion used by
 the TaskMesh promotion gate. Benchmark startup fails clearly unless Vulkan timestamp queries are
-available. Schema v5 pairs every timestamp sample with the same frame's delayed GPU counters and
-rejects the run if any sticky capacity-overflow flag is observed. Reports retain the whole-frame GPU median/p95 and a per-pass
-median/p95 block for clear, classify, scan, scatter, culling, occluder, Hi-Z, indirect preparation,
-backend raster, and optional stats-copy work. A pass which is absent from the selected path is
-serialized as `null`.
+available. Schema v6 pairs every timestamp sample with the same frame's delayed GPU counters and
+rejects the run if any sticky capacity-overflow flag is observed. Reports retain the whole-frame
+GPU median/p95 and a per-pass median/p95 block for clear, classify, scan, candidate scatter,
+culling, occluder, Hi-Z, indirect preparation, backend raster, and optional stats-copy work. A pass
+which is absent from the selected path is serialized as `null`. Schema v5 reports and Auto profiles
+are rejected by the existing strict version check and must be regenerated.
 
 ```text
 cargo run --release -p zen-demo --bin meshlet-gltf -- scene.gltf --renderer legacy --benchmark-out legacy.json

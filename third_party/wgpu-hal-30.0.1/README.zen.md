@@ -10,6 +10,6 @@ The local delta fixes Vulkan resource synchronization for `EXPERIMENTAL_MESH_SHA
 - sampled/storage texture barriers include those stages as well;
 - the extension stage bits are added only when wgpu enabled the mesh-shader device feature.
 
-Without this, compute-written visible work, task packets, counters, and Hi-Z data can remain
+Without this, compute-written visible work, backend work counts, counters, and Hi-Z data can remain
 invisible to a following task/mesh shader even though wgpu emitted a resource barrier. Remove this
 patch once the same feature-aware stage mapping ships upstream.

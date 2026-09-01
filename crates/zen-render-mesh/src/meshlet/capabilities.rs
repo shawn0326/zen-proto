@@ -3,7 +3,7 @@ use std::{error::Error, fmt};
 use super::config::{
     MESHLET_FALLBACK_SAMPLER_SLOTS, MESHLET_FALLBACK_TEXTURE_SLOTS, MESHLET_MAX_TRIANGLES,
     MESHLET_MAX_VERTICES, MeshletBackend, MeshletConfigError, MeshletRendererConfig,
-    TASK_PACKET_MESHLET_COUNT,
+    TASK_MESHLETS_PER_WORKGROUP,
 };
 
 const MESH_WORKGROUP_INVOCATIONS: u32 = if MESHLET_MAX_VERTICES > MESHLET_MAX_TRIANGLES {
@@ -12,7 +12,7 @@ const MESH_WORKGROUP_INVOCATIONS: u32 = if MESHLET_MAX_VERTICES > MESHLET_MAX_TR
     MESHLET_MAX_TRIANGLES
 };
 const TASK_PAYLOAD_WORK_BYTES: u32 = 16;
-const TASK_PAYLOAD_BYTES: u32 = TASK_PACKET_MESHLET_COUNT * TASK_PAYLOAD_WORK_BYTES;
+const TASK_PAYLOAD_BYTES: u32 = TASK_MESHLETS_PER_WORKGROUP * TASK_PAYLOAD_WORK_BYTES;
 
 /// Stable Vulkan driver identity used by persisted benchmark profiles and explicit deny rules.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
@@ -631,7 +631,7 @@ fn mesh_shader_limit_failures(
         &mut failures,
         "max_mesh_workgroup_total_count",
         if backend.uses_task_shaders() {
-            TASK_PACKET_MESHLET_COUNT
+            TASK_MESHLETS_PER_WORKGROUP
         } else {
             1
         },
@@ -641,7 +641,7 @@ fn mesh_shader_limit_failures(
         &mut failures,
         "max_mesh_workgroups_per_dimension",
         if backend.uses_task_shaders() {
-            TASK_PACKET_MESHLET_COUNT
+            TASK_MESHLETS_PER_WORKGROUP
         } else {
             1
         },
@@ -688,13 +688,13 @@ fn mesh_shader_limit_failures(
         check_limit(
             &mut failures,
             "max_task_invocations_per_workgroup",
-            TASK_PACKET_MESHLET_COUNT,
+            TASK_MESHLETS_PER_WORKGROUP,
             limits.max_task_invocations_per_workgroup,
         );
         check_limit(
             &mut failures,
             "max_task_invocations_per_dimension",
-            TASK_PACKET_MESHLET_COUNT,
+            TASK_MESHLETS_PER_WORKGROUP,
             limits.max_task_invocations_per_dimension,
         );
         check_limit(
@@ -921,9 +921,9 @@ mod tests {
     }
 
     #[test]
-    fn task_mesh_requires_room_for_every_packet_mesh_output() {
+    fn task_mesh_requires_room_for_every_task_child() {
         let mut limits = mesh_limits();
-        limits.max_mesh_workgroup_total_count = TASK_PACKET_MESHLET_COUNT - 1;
+        limits.max_mesh_workgroup_total_count = TASK_MESHLETS_PER_WORKGROUP - 1;
         let capabilities = MeshletCapabilities::from_parts(
             wgpu::Backend::Vulkan,
             indexed_features() | wgpu::Features::EXPERIMENTAL_MESH_SHADER,
@@ -943,11 +943,11 @@ mod tests {
         };
         assert!(failures.iter().any(|failure| {
             failure.name == "max_mesh_workgroup_total_count"
-                && failure.required == TASK_PACKET_MESHLET_COUNT
+                && failure.required == TASK_MESHLETS_PER_WORKGROUP
         }));
 
         let mut limits = mesh_limits();
-        limits.max_mesh_workgroups_per_dimension = TASK_PACKET_MESHLET_COUNT - 1;
+        limits.max_mesh_workgroups_per_dimension = TASK_MESHLETS_PER_WORKGROUP - 1;
         let capabilities = MeshletCapabilities::from_parts(
             wgpu::Backend::Vulkan,
             indexed_features() | wgpu::Features::EXPERIMENTAL_MESH_SHADER,
@@ -966,7 +966,7 @@ mod tests {
         };
         assert!(failures.iter().any(|failure| {
             failure.name == "max_mesh_workgroups_per_dimension"
-                && failure.required == TASK_PACKET_MESHLET_COUNT
+                && failure.required == TASK_MESHLETS_PER_WORKGROUP
         }));
     }
 

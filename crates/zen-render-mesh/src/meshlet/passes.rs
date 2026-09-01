@@ -23,7 +23,7 @@ pub(crate) struct MeshletPassSet {
 
     classify: ComputeStage,
     prefix_scan: PrefixScanStages,
-    scatter: ComputeStage,
+    candidate_scatter: ComputeStage,
     cull: ComputeStage,
     indirect_prepare: ComputeStage,
 
@@ -101,26 +101,18 @@ impl MeshletPassSet {
             ],
         );
         let prefix_scan = create_prefix_scan_stages(device);
-        let scatter_constants = [(
-            "ENABLE_TASK_PACKETS",
-            f64::from(u8::from(task_packets_enabled(backend))),
-        )];
-        let scatter = create_compute_stage_with_constants(
+        let candidate_scatter = create_compute_stage(
             device,
-            "meshlet.scatter",
-            include_str!("../../shaders/meshlet/scatter.wgsl"),
+            "meshlet.candidate-scatter",
+            include_str!("../../shaders/meshlet/candidate_scatter.wgsl"),
             &[
                 storage_entry(0, true),
                 storage_entry(1, true),
-                // Binding 2 was deliberately retired: PSO class is InstanceData._pad.x rather
-                // than a material texture bit. Keeping the hole makes that ABI change obvious.
-                storage_entry_at(3, wgpu::ShaderStages::COMPUTE, true),
-                storage_entry_at(4, wgpu::ShaderStages::COMPUTE, false),
-                storage_entry_at(5, wgpu::ShaderStages::COMPUTE, false),
-                storage_entry_at(6, wgpu::ShaderStages::COMPUTE, false),
-                uniform_entry(7, false, FRAME_UNIFORM_SIZE),
+                storage_entry(2, true),
+                storage_entry(3, false),
+                storage_entry(4, false),
+                uniform_entry(5, false, FRAME_UNIFORM_SIZE),
             ],
-            &scatter_constants,
         );
         let cull = create_compute_stage(
             device,
@@ -261,7 +253,7 @@ impl MeshletPassSet {
             max_dispatch_dimension: max_dispatch_dimension.max(1),
             classify,
             prefix_scan,
-            scatter,
+            candidate_scatter,
             cull,
             indirect_prepare,
             indexed_layout,
@@ -341,7 +333,7 @@ impl MeshletPassSet {
         }
     }
 
-    pub(crate) fn encode_scatter(
+    pub(crate) fn encode_candidate_scatter(
         &self,
         device: &wgpu::Device,
         pass: &mut wgpu::ComputePass<'_>,
@@ -349,23 +341,22 @@ impl MeshletPassSet {
         frame_uniform: &wgpu::Buffer,
     ) {
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("meshlet.scatter.bind-group"),
-            layout: &self.scatter.layout,
+            label: Some("meshlet.candidate-scatter.bind-group"),
+            layout: &self.candidate_scatter.layout,
             entries: &[
                 buffer_entry(0, &scene.lods),
                 buffer_entry(1, &scene.instances),
-                buffer_entry(3, &scene.classifications),
-                buffer_entry(4, &scene.candidates),
-                buffer_entry(5, &scene.task_packets),
-                buffer_entry(6, &scene.counters),
-                sized_buffer_entry(7, frame_uniform, FRAME_UNIFORM_SIZE),
+                buffer_entry(2, &scene.classifications),
+                buffer_entry(3, &scene.candidates),
+                buffer_entry(4, &scene.counters),
+                sized_buffer_entry(5, frame_uniform, FRAME_UNIFORM_SIZE),
             ],
         });
         let (x, y) = dispatch_2d(
             scene.instance_count.div_ceil(CLASSIFY_WORKGROUP_SIZE),
             self.max_dispatch_dimension,
         );
-        pass.set_pipeline(&self.scatter.pipeline);
+        pass.set_pipeline(&self.candidate_scatter.pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
         pass.dispatch_workgroups(x, y, 1);
     }
@@ -466,26 +457,19 @@ impl MeshletPassSet {
 
     /// Draws the selected mesh-only or task+mesh backend. The renderer still chooses which pass to
     /// record at startup; this method contains no per-frame backend fallback.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "mesh rasterization binds the explicit scene, bindless, frame, and Hi-Z inputs"
-    )]
     pub(crate) fn encode_mesh_raster(
         &self,
         device: &wgpu::Device,
         pass: &mut wgpu::RenderPass<'_>,
         scene: &MeshletGpuScene,
         bindless: &wgpu::BindGroup,
-        frame_uniform: &wgpu::Buffer,
-        hiz_view: &wgpu::TextureView,
         bin: MeshletPsoClass,
     ) {
         let mesh = self
             .mesh
             .as_ref()
             .expect("encode_mesh_raster requires MeshOnly or TaskMesh");
-        let bind_group =
-            self.create_mesh_bind_group(device, &mesh.layout, scene, frame_uniform, hiz_view);
+        let bind_group = self.create_mesh_bind_group(device, &mesh.layout, scene);
         pass.set_pipeline(mesh.pipelines.get(bin));
         pass.set_bind_group(0, &bind_group, &[raster_dynamic_offset(bin)]);
         pass.set_bind_group(1, bindless, &[]);
@@ -523,8 +507,6 @@ impl MeshletPassSet {
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
         scene: &MeshletGpuScene,
-        frame_uniform: &wgpu::Buffer,
-        hiz_view: &wgpu::TextureView,
     ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("meshlet.mesh.scene-bind-group"),
@@ -537,19 +519,8 @@ impl MeshletPassSet {
                 buffer_entry(4, &scene.meshlet_vertices),
                 buffer_entry(5, &scene.micro_indices),
                 buffer_entry(6, &scene.visible),
-                buffer_entry(7, &scene.counters),
-                sized_buffer_entry(8, &scene.raster_uniform, size_of::<RasterUniform>() as u64),
-                buffer_entry(9, &scene.task_packets),
-                sized_buffer_entry(10, frame_uniform, FRAME_UNIFORM_SIZE),
-                wgpu::BindGroupEntry {
-                    binding: 11,
-                    resource: wgpu::BindingResource::TextureView(hiz_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 12,
-                    resource: wgpu::BindingResource::Sampler(&self.hiz_sampler),
-                },
-                buffer_entry(13, &scene.backend_work_counts),
+                sized_buffer_entry(7, &scene.raster_uniform, size_of::<RasterUniform>() as u64),
+                buffer_entry(8, &scene.backend_work_counts),
             ],
         })
     }
@@ -739,13 +710,8 @@ fn create_mesh_raster_pipelines(
             storage_entry_at(4, mesh_stage, true),
             storage_entry_at(5, mesh_stage, true),
             storage_entry_at(6, task_and_mesh, true),
-            storage_entry_at(7, task_and_mesh, false),
-            uniform_entry_at(8, task_and_mesh, true, size_of::<RasterUniform>() as u64),
-            storage_entry_at(9, task_stage, true),
-            uniform_entry_at(10, task_stage, false, FRAME_UNIFORM_SIZE),
-            texture_entry(11, task_stage),
-            sampler_entry(12, task_stage),
-            storage_entry_at(13, task_and_mesh, true),
+            uniform_entry_at(7, task_and_mesh, true, size_of::<RasterUniform>() as u64),
+            storage_entry_at(8, task_and_mesh, true),
         ],
     });
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -881,7 +847,6 @@ fn indirect_workgroup_total_limits(
 }
 
 /// Chooses the narrowest legal row width that can span the total limit within the Y dimension.
-/// Keeping X small bounds duplicate-last padding to strictly fewer than `width` workgroups.
 fn rectangular_dispatch_limit(total_limit: u32, max_dimension: u32) -> (u32, u32) {
     if total_limit == 0 {
         return (1, 0);
@@ -890,13 +855,6 @@ fn rectangular_dispatch_limit(total_limit: u32, max_dimension: u32) -> (u32, u32
     let width = total_limit.div_ceil(max_dimension).min(max_dimension);
     let rows = (total_limit / width).min(max_dimension);
     (width, width * rows)
-}
-
-fn task_packets_enabled(_backend: MeshletBackend) -> bool {
-    // The Vulkan compatibility path feeds TaskMesh from the compute-produced visible list. Keep
-    // the retired packet binding ABI stable, but do not spend scatter time or overflow capacity on
-    // packets that no backend consumes.
-    false
 }
 
 fn raster_dynamic_offset(bin: MeshletPsoClass) -> u32 {
@@ -996,7 +954,7 @@ fn sized_buffer_entry<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::meshlet::config::TASK_PACKET_MESHLET_COUNT;
+    use crate::meshlet::config::TASK_MESHLETS_PER_WORKGROUP;
 
     fn bounded_dispatch_for_test(
         count: u32,
@@ -1241,8 +1199,8 @@ mod tests {
             }
         }
 
-        // Prefer the minimum legal row width. Any padded final row therefore duplicates fewer
-        // than `x` meshlets, while the full launch stays under the stage total.
+        // Prefer the minimum legal row width. Padding stays under the stage total and is rejected
+        // by the mesh/task shader's flattened work-count check.
         assert_eq!(
             bounded_dispatch_for_test(65_536, 65_535, 70_000),
             ((2, 32_768), false)
@@ -1290,17 +1248,6 @@ mod tests {
             indirect_workgroup_total_limits(MeshletBackend::TaskMesh, mesh_limit, task_limit),
             (0, task_limit)
         );
-    }
-
-    #[test]
-    fn compute_visible_backends_do_not_build_retired_task_packets() {
-        for backend in [
-            MeshletBackend::IndexedIndirect,
-            MeshletBackend::MeshOnly,
-            MeshletBackend::TaskMesh,
-        ] {
-            assert!(!task_packets_enabled(backend));
-        }
     }
 
     #[test]
@@ -1377,35 +1324,52 @@ mod tests {
     }
 
     #[test]
-    fn task_packet_compaction_matches_indexed_visibility_without_occlusion() {
-        let visibility = (0..197_u32)
-            .map(|index| index % 3 != 0 && index % 11 != 5)
-            .collect::<Vec<_>>();
-        let indexed = visibility
-            .iter()
-            .enumerate()
-            .filter_map(|(index, &visible)| visible.then_some(index))
-            .collect::<Vec<_>>();
-        let mut task = Vec::new();
-        for (packet_index, packet) in visibility
-            .chunks(TASK_PACKET_MESHLET_COUNT as usize)
-            .enumerate()
-        {
-            task.extend(packet.iter().enumerate().filter_map(|(lane, &visible)| {
-                visible.then_some(packet_index * TASK_PACKET_MESHLET_COUNT as usize + lane)
-            }));
-        }
-        assert_eq!(task, indexed);
+    fn task_child_counts_and_payload_indices_cover_every_visible_meshlet_once() {
+        let children = |visible_count: u32, task_group: u32| {
+            let first = task_group.saturating_mul(TASK_MESHLETS_PER_WORKGROUP);
+            let count = visible_count
+                .saturating_sub(first)
+                .min(TASK_MESHLETS_PER_WORKGROUP);
+            (first..first + count).collect::<Vec<_>>()
+        };
 
-        // If a defensive device-limit clamp ever lowers the task output count, only the payload
-        // prefix is considered visible/output work; the dropped lanes are represented by overflow.
-        let one_packet = [true; TASK_PACKET_MESHLET_COUNT as usize];
-        let emitted = one_packet
-            .iter()
-            .enumerate()
-            .filter_map(|(lane, &visible)| visible.then_some(lane))
-            .take(7)
+        let cases: [(u32, u32, usize); 5] =
+            [(0, 0, 0), (1, 1, 1), (31, 1, 31), (32, 1, 32), (33, 2, 1)];
+        for (visible_count, expected_groups, expected_tail) in cases {
+            let group_count = visible_count.div_ceil(TASK_MESHLETS_PER_WORKGROUP);
+            assert_eq!(group_count, expected_groups);
+            let payload_indices = (0..group_count)
+                .flat_map(|task_group| children(visible_count, task_group))
+                .collect::<Vec<_>>();
+            assert_eq!(payload_indices, (0..visible_count).collect::<Vec<_>>());
+            assert_eq!(
+                group_count
+                    .checked_sub(1)
+                    .map_or(0, |last| children(visible_count, last).len()),
+                expected_tail
+            );
+            assert!(children(visible_count, group_count).is_empty());
+        }
+    }
+
+    #[test]
+    fn rectangular_tail_groups_flatten_after_the_last_real_work_item() {
+        let flattened = |x: u32, y: u32, width: u32| y * width + x;
+        let visible_count = 33;
+        let ((width, rows), overflow) = bounded_dispatch_for_test(visible_count, 8, 64);
+        assert!(!overflow);
+        assert_eq!((width, rows), (8, 5));
+        let launched = (0..rows)
+            .flat_map(|y| (0..width).map(move |x| flattened(x, y, width)))
             .collect::<Vec<_>>();
-        assert_eq!(emitted, (0..7).collect::<Vec<_>>());
+        assert_eq!(
+            &launched[..visible_count as usize],
+            &(0..visible_count).collect::<Vec<_>>()
+        );
+        assert!(
+            launched[visible_count as usize..]
+                .iter()
+                .all(|&work| work >= visible_count)
+        );
     }
 }

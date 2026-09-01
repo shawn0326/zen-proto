@@ -24,7 +24,6 @@ pub(crate) struct MeshletGraphResources<'frame> {
     pub scan_blocks: Buffer<'frame>,
     pub lod_history: Buffer<'frame>,
     pub candidates: Buffer<'frame>,
-    pub task_packets: Buffer<'frame>,
     pub visible: Buffer<'frame>,
     pub draw_args: Buffer<'frame>,
     pub counters: Buffer<'frame>,
@@ -92,8 +91,6 @@ impl<'frame> MeshletGraphResources<'frame> {
         // frames without an initialization-only graph branch.
         let lod_history = import_buffer(frame, "meshlet.lod-history", &scene.lod_history, true)?;
         let candidates = import_buffer(frame, "meshlet.candidates", &scene.candidates, false)?;
-        let task_packets =
-            import_buffer(frame, "meshlet.task-packets", &scene.task_packets, false)?;
         let visible = import_buffer(frame, "meshlet.visible-work", &scene.visible, false)?;
         let draw_args = import_buffer(frame, "meshlet.draw-args", &scene.draw_args, false)?;
         let counters = import_buffer(frame, "meshlet.counters", &scene.counters, false)?;
@@ -151,7 +148,6 @@ impl<'frame> MeshletGraphResources<'frame> {
             scan_blocks,
             lod_history,
             candidates,
-            task_packets,
             visible,
             draw_args,
             counters,

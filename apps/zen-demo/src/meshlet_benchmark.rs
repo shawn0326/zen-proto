@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use zen_render_mesh::{MeshletBenchmarkProfile, MeshletGpuPassTimings};
 
 /// JSON schema emitted by [`MeshletBenchmarkReport`].
-pub const MESHLET_BENCHMARK_SCHEMA_VERSION: u32 = 5;
+pub const MESHLET_BENCHMARK_SCHEMA_VERSION: u32 = 6;
 /// Required benchmark width.
 pub const MESHLET_BENCHMARK_WIDTH: u32 = 1_920;
 /// Required benchmark height.
@@ -287,7 +287,7 @@ pub struct MeshletBenchmarkGpuPassStatisticsNs {
     pub clear_frame_counters: Option<MeshletBenchmarkStatisticsNs>,
     pub instance_classify_lod_count: Option<MeshletBenchmarkStatisticsNs>,
     pub prefix_scan: Option<MeshletBenchmarkStatisticsNs>,
-    pub packet_work_scatter: Option<MeshletBenchmarkStatisticsNs>,
+    pub candidate_scatter: Option<MeshletBenchmarkStatisticsNs>,
     pub coarse_cull: Option<MeshletBenchmarkStatisticsNs>,
     pub occluder_depth: Option<MeshletBenchmarkStatisticsNs>,
     pub hiz_build: Option<MeshletBenchmarkStatisticsNs>,
@@ -311,7 +311,7 @@ impl MeshletBenchmarkGpuPassStatisticsNs {
             clear_frame_counters: summarize(|timing| timing.clear_frame_counters_ns),
             instance_classify_lod_count: summarize(|timing| timing.instance_classify_lod_count_ns),
             prefix_scan: summarize(|timing| timing.prefix_scan_ns),
-            packet_work_scatter: summarize(|timing| timing.packet_work_scatter_ns),
+            candidate_scatter: summarize(|timing| timing.candidate_scatter_ns),
             coarse_cull: summarize(|timing| timing.coarse_cull_ns),
             occluder_depth: summarize(|timing| timing.occluder_depth_ns),
             hiz_build: summarize(|timing| timing.hiz_build_ns),
@@ -334,10 +334,7 @@ impl MeshletBenchmarkGpuPassStatisticsNs {
                 self.instance_classify_lod_count,
             ),
             ("gpu_passes_ns.prefix_scan", self.prefix_scan),
-            (
-                "gpu_passes_ns.packet_work_scatter",
-                self.packet_work_scatter,
-            ),
+            ("gpu_passes_ns.candidate_scatter", self.candidate_scatter),
             ("gpu_passes_ns.coarse_cull", self.coarse_cull),
             ("gpu_passes_ns.occluder_depth", self.occluder_depth),
             ("gpu_passes_ns.hiz_build", self.hiz_build),
@@ -462,10 +459,7 @@ impl MeshletBenchmarkReport {
                 passes.instance_classify_lod_count,
             ),
             ("gpu_passes_ns.prefix_scan", passes.prefix_scan),
-            (
-                "gpu_passes_ns.packet_work_scatter",
-                passes.packet_work_scatter,
-            ),
+            ("gpu_passes_ns.candidate_scatter", passes.candidate_scatter),
             ("gpu_passes_ns.coarse_cull", passes.coarse_cull),
             ("gpu_passes_ns.occluder_depth", passes.occluder_depth),
             ("gpu_passes_ns.hiz_build", passes.hiz_build),
@@ -1043,7 +1037,7 @@ mod tests {
                 clear_frame_counters: pass,
                 instance_classify_lod_count: pass,
                 prefix_scan: pass,
-                packet_work_scatter: pass,
+                candidate_scatter: pass,
                 coarse_cull: pass,
                 occluder_depth: pass,
                 hiz_build: pass,

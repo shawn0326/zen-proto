@@ -12,8 +12,7 @@ pub(crate) const fn prefix_scan_block_count(instance_count: u32) -> u32 {
 pub(crate) const OVERFLOW_CANDIDATES: u32 = 1 << 0;
 pub(crate) const OVERFLOW_VISIBLE_BACKFACE: u32 = 1 << 1;
 pub(crate) const OVERFLOW_VISIBLE_TWO_SIDED: u32 = 1 << 2;
-pub(crate) const OVERFLOW_TASK_PACKETS: u32 = 1 << 3;
-pub(crate) const OVERFLOW_DISPATCH: u32 = 1 << 4;
+pub(crate) const OVERFLOW_DISPATCH: u32 = 1 << 3;
 
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -79,15 +78,6 @@ pub(crate) struct InstanceClassification {
 
 pub(crate) type VisibleMeshletWork = CandidateWork;
 
-#[repr(C, align(16))]
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub(crate) struct TaskPacket {
-    pub first_meshlet: u32,
-    pub meshlet_count: u32,
-    pub instance_id: u32,
-    pub material_and_bin: u32,
-}
-
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub(crate) struct DrawIndexedIndirectArgs {
@@ -122,8 +112,6 @@ pub(crate) struct BackendWorkCounts {
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 pub(crate) struct GpuCounters {
     pub candidate_count: u32,
-    pub packet_count_backface: u32,
-    pub packet_count_two_sided: u32,
     pub visible_count_backface: u32,
     pub visible_count_two_sided: u32,
     pub instances_visible: u32,
@@ -136,9 +124,6 @@ pub(crate) struct GpuCounters {
     pub lod_histogram: [u32; 8],
     pub lod_overflow_instances: u32,
     pub conservatively_visible_meshlets: u32,
-    pub raster_claim_backface: u32,
-    pub raster_claim_two_sided: u32,
-    pub _pad: [u32; 8],
 }
 
 impl GpuCounters {
@@ -163,8 +148,10 @@ pub(crate) struct FrameUniform {
     pub parameters: [f32; 4],
     /// instance count, mesh count, candidate capacity, per-bin visible capacity
     pub counts: [u32; 4],
-    /// task packet capacity per bin, Hi-Z mip count, max dispatch dimension, perspective flag
-    pub limits: [u32; 4],
+    pub hiz_mip_count: u32,
+    pub max_dispatch_dimension: u32,
+    pub perspective_projection: u32,
+    pub _pad: u32,
 }
 
 #[repr(C, align(16))]
@@ -172,9 +159,9 @@ pub(crate) struct FrameUniform {
 pub(crate) struct RasterUniform {
     pub view_projection: [[f32; 4]; 4],
     pub visible_base: u32,
-    pub task_packet_base: u32,
     pub render_mode: u32,
     pub pso_bin: u32,
+    pub _pad: u32,
 }
 
 const _: () = {
@@ -184,11 +171,10 @@ const _: () = {
     assert!(std::mem::size_of::<GpuMeshletRecord>() == 64);
     assert!(std::mem::size_of::<CandidateWork>() == 16);
     assert!(std::mem::size_of::<InstanceClassification>() == 16);
-    assert!(std::mem::size_of::<TaskPacket>() == 16);
     assert!(std::mem::size_of::<DrawIndexedIndirectArgs>() == 20);
     assert!(std::mem::size_of::<DispatchIndirectArgs>() == 12);
     assert!(std::mem::size_of::<BackendWorkCounts>() == 16);
-    assert!(std::mem::size_of::<GpuCounters>() == 128);
+    assert!(std::mem::size_of::<GpuCounters>() == 80);
     assert!(std::mem::size_of::<FrameUniform>() as u64 == FRAME_UNIFORM_SIZE);
 };
 
@@ -198,24 +184,19 @@ mod tests {
 
     #[test]
     fn indirect_count_offsets_match_the_wgsl_counter_header() {
-        assert_eq!(GpuCounters::VISIBLE_BACKFACE_OFFSET, 12);
-        assert_eq!(GpuCounters::VISIBLE_TWO_SIDED_OFFSET, 16);
-        assert_eq!(std::mem::offset_of!(GpuCounters, overflow), 44);
-        assert_eq!(std::mem::offset_of!(GpuCounters, lod_histogram), 48);
+        assert_eq!(GpuCounters::VISIBLE_BACKFACE_OFFSET, 4);
+        assert_eq!(GpuCounters::VISIBLE_TWO_SIDED_OFFSET, 8);
+        assert_eq!(std::mem::offset_of!(GpuCounters, overflow), 36);
+        assert_eq!(std::mem::offset_of!(GpuCounters, lod_histogram), 40);
         assert_eq!(
             std::mem::offset_of!(GpuCounters, lod_overflow_instances),
-            80
+            72
         );
         assert_eq!(
             std::mem::offset_of!(GpuCounters, conservatively_visible_meshlets),
-            84
+            76
         );
-        assert_eq!(std::mem::offset_of!(GpuCounters, raster_claim_backface), 88);
-        assert_eq!(
-            std::mem::offset_of!(GpuCounters, raster_claim_two_sided),
-            92
-        );
-        assert_eq!(std::mem::size_of::<GpuCounters>(), 128);
+        assert_eq!(std::mem::size_of::<GpuCounters>(), 80);
     }
 
     #[test]
@@ -230,9 +211,9 @@ mod tests {
     fn raster_uniform_keeps_its_dynamic_offset_abi() {
         assert_eq!(std::mem::offset_of!(RasterUniform, view_projection), 0);
         assert_eq!(std::mem::offset_of!(RasterUniform, visible_base), 64);
-        assert_eq!(std::mem::offset_of!(RasterUniform, task_packet_base), 68);
-        assert_eq!(std::mem::offset_of!(RasterUniform, render_mode), 72);
-        assert_eq!(std::mem::offset_of!(RasterUniform, pso_bin), 76);
+        assert_eq!(std::mem::offset_of!(RasterUniform, render_mode), 68);
+        assert_eq!(std::mem::offset_of!(RasterUniform, pso_bin), 72);
+        assert_eq!(std::mem::offset_of!(RasterUniform, _pad), 76);
         assert_eq!(std::mem::size_of::<RasterUniform>(), 80);
         assert_eq!(RASTER_UNIFORM_STRIDE, 256);
     }
@@ -246,7 +227,6 @@ mod tests {
             std::mem::align_of::<GpuMeshletRecord>(),
             std::mem::align_of::<CandidateWork>(),
             std::mem::align_of::<InstanceClassification>(),
-            std::mem::align_of::<TaskPacket>(),
         ] {
             assert_eq!(alignment, 16);
         }

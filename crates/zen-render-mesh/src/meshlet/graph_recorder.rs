@@ -64,7 +64,7 @@ impl<'frame> MeshletGraphRecorder<'frame> {
         )?;
         self.record_classify(frame, &resources)?;
         self.record_prefix_scan(frame, &resources)?;
-        self.record_scatter(frame, &resources)?;
+        self.record_candidate_scatter(frame, &resources)?;
         self.record_cull(frame, "meshlet.coarse-cull", &resources, false)?;
         self.record_occluder_depth(frame, targets, &resources)?;
 
@@ -84,12 +84,7 @@ impl<'frame> MeshletGraphRecorder<'frame> {
         }
 
         self.record_indirect_prepare(frame, &resources)?;
-        self.record_backend_raster(
-            frame,
-            targets,
-            &resources,
-            prepared.enable_occlusion_culling,
-        )?;
+        self.record_backend_raster(frame, targets, &resources)?;
 
         let readback = if prepared.readback_index.is_some() {
             Some(self.record_stats_copy(frame, &resources)?)
@@ -179,12 +174,12 @@ impl<'frame> MeshletGraphRecorder<'frame> {
         Ok(())
     }
 
-    fn record_scatter(
+    fn record_candidate_scatter(
         self,
         frame: &mut Frame<'frame>,
         resources: &MeshletGraphResources<'frame>,
     ) -> Result<(), FrameGraphError> {
-        let mut pass = frame.compute_pass("meshlet.packet-work-scatter");
+        let mut pass = frame.compute_pass("meshlet.candidate-scatter");
         pass.set_side_effect(false);
         for buffer in [
             resources.lods,
@@ -193,10 +188,11 @@ impl<'frame> MeshletGraphRecorder<'frame> {
         ] {
             let _ = pass.storage_buffer_read(buffer, BufferRange::whole())?;
         }
-        for buffer in [resources.candidates, resources.task_packets] {
-            let _ =
-                pass.storage_buffer_write(buffer, BufferRange::whole(), WriteContents::Overwrite)?;
-        }
+        let _ = pass.storage_buffer_write(
+            resources.candidates,
+            BufferRange::whole(),
+            WriteContents::Overwrite,
+        )?;
         let _ = pass.storage_buffer_write(
             resources.counters,
             BufferRange::whole(),
@@ -204,7 +200,7 @@ impl<'frame> MeshletGraphRecorder<'frame> {
         )?;
         let _ = pass.uniform_buffer(resources.frame_uniform, BufferRange::whole())?;
         pass.finish_compute(move |mut context| {
-            self.renderer.passes().encode_scatter(
+            self.renderer.passes().encode_candidate_scatter(
                 context.device,
                 &mut context.pass,
                 self.renderer.scene(),
@@ -433,7 +429,6 @@ impl<'frame> MeshletGraphRecorder<'frame> {
         frame: &mut Frame<'frame>,
         targets: MeshRenderTargets<'frame>,
         resources: &MeshletGraphResources<'frame>,
-        use_hiz: bool,
     ) -> Result<(), FrameGraphError> {
         let mut pass = frame.render_pass(format!(
             "meshlet.backend-raster.{}",
@@ -448,28 +443,15 @@ impl<'frame> MeshletGraphRecorder<'frame> {
             resources.meshlet_vertices,
             resources.micro_indices,
             resources.visible,
-            resources.task_packets,
         ] {
             let _ = pass.storage_buffer_read(buffer, BufferRange::whole())?;
         }
         if self.renderer.backend().uses_mesh_shaders() {
-            let _ = pass.storage_buffer_write(
-                resources.counters,
-                BufferRange::whole(),
-                WriteContents::Preserve,
-            )?;
-        } else {
-            let _ = pass.storage_buffer_read(resources.counters, BufferRange::whole())?;
+            let _ =
+                pass.storage_buffer_read(resources.backend_work_counts, BufferRange::whole())?;
         }
-        let _ = pass.storage_buffer_read(resources.backend_work_counts, BufferRange::whole())?;
-        let _ = pass.uniform_buffer(resources.frame_uniform, BufferRange::whole())?;
         let _ = pass.uniform_buffer(resources.raster_uniform, BufferRange::whole())?;
         let _ = pass.bindless_texture_set(resources.textures)?;
-        let sampled = pass.sampled_texture(if use_hiz {
-            resources.hiz
-        } else {
-            resources.dummy_hiz
-        })?;
         match self.renderer.backend() {
             MeshletBackend::IndexedIndirect => {
                 let _ = pass.index_buffer(resources.fallback_indices, BufferRange::whole())?;
@@ -495,7 +477,6 @@ impl<'frame> MeshletGraphRecorder<'frame> {
         )?;
         let _ = pass.depth_attachment(targets.depth, DepthAttachmentOps::load_store())?;
         pass.finish_render(move |mut context| {
-            let hiz = context.resources.texture_view(sampled)?;
             for bin in BINS {
                 match self.renderer.backend() {
                     MeshletBackend::IndexedIndirect => {
@@ -513,8 +494,6 @@ impl<'frame> MeshletGraphRecorder<'frame> {
                             &mut context.pass,
                             self.renderer.scene(),
                             self.renderer.bindless().bind_group(),
-                            &self.renderer.scene().frame_uniform,
-                            hiz,
                             bin,
                         );
                     }

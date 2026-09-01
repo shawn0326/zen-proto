@@ -475,7 +475,7 @@ fn encode_config(config: MeshletBuildConfig) -> Vec<u8> {
     let mut output = Vec::with_capacity(CONFIG_STRIDE);
     push_u32(&mut output, config.max_meshlet_vertices);
     push_u32(&mut output, config.max_meshlet_triangles);
-    push_u32(&mut output, config.task_packet_meshlets);
+    push_u32(&mut output, config.task_workgroup_meshlets);
     push_u32(&mut output, config.max_lods);
     push_f32(&mut output, config.lod_target_ratio);
     push_u32(&mut output, config.min_lod_triangles);
@@ -489,7 +489,7 @@ fn decode_config(bytes: &[u8]) -> Result<MeshletBuildConfig, MeshletAssetError> 
     let config = MeshletBuildConfig {
         max_meshlet_vertices: reader.read_u32()?,
         max_meshlet_triangles: reader.read_u32()?,
-        task_packet_meshlets: reader.read_u32()?,
+        task_workgroup_meshlets: reader.read_u32()?,
         max_lods: reader.read_u32()?,
         lod_target_ratio: reader.read_f32()?,
         min_lod_triangles: reader.read_u32()?,

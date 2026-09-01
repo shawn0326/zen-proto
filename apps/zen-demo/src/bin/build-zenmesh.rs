@@ -9,7 +9,7 @@ use zen_render_mesh::MeshletBuildConfig;
 #[derive(Debug, thiserror::Error)]
 enum BuildCliError {
     #[error(
-        "usage: build-zenmesh <input.gltf|input.glb> [-o output.zenmesh] [--max-vertices N] [--max-triangles N] [--task-packet N] [--max-lods N] [--lod-ratio F] [--min-lod-triangles N] [--cone-weight F] [--flip-v] [--bake-node-transform]"
+        "usage: build-zenmesh <input.gltf|input.glb> [-o output.zenmesh] [--max-vertices N] [--max-triangles N] [--task-workgroup N] [--max-lods N] [--lod-ratio F] [--min-lod-triangles N] [--cone-weight F] [--flip-v] [--bake-node-transform]"
     )]
     Usage,
     #[error("missing value after {0}")]
@@ -85,10 +85,10 @@ fn parse_args(arguments: impl IntoIterator<Item = OsString>) -> Result<BuildArgs
                     "--max-triangles",
                 )?;
             }
-            Some("--task-packet") => {
-                config.task_packet_meshlets = parse_value(
-                    take_value(&mut arguments, "--task-packet")?,
-                    "--task-packet",
+            Some("--task-workgroup") => {
+                config.task_workgroup_meshlets = parse_value(
+                    take_value(&mut arguments, "--task-workgroup")?,
+                    "--task-workgroup",
                 )?;
             }
             Some("--max-lods") => {
@@ -170,7 +170,7 @@ mod tests {
         assert_eq!(args.output, PathBuf::from("scene.zenmesh"));
         assert_eq!(args.config.max_meshlet_vertices, 64);
         assert_eq!(args.config.max_meshlet_triangles, 64);
-        assert_eq!(args.config.task_packet_meshlets, 32);
+        assert_eq!(args.config.task_workgroup_meshlets, 32);
         assert_eq!(args.config.lod_target_ratio, 0.5);
         assert_eq!(args.config.min_lod_triangles, 128);
     }
@@ -186,7 +186,7 @@ mod tests {
                 "32",
                 "--max-triangles",
                 "48",
-                "--task-packet",
+                "--task-workgroup",
                 "16",
                 "--max-lods",
                 "4",
@@ -205,7 +205,7 @@ mod tests {
         assert_eq!(args.output, PathBuf::from("cache/custom.zenmesh"));
         assert_eq!(args.config.max_meshlet_vertices, 32);
         assert_eq!(args.config.max_meshlet_triangles, 48);
-        assert_eq!(args.config.task_packet_meshlets, 16);
+        assert_eq!(args.config.task_workgroup_meshlets, 16);
         assert_eq!(args.config.max_lods, 4);
         assert_eq!(args.config.lod_target_ratio, 0.4);
         assert_eq!(args.config.min_lod_triangles, 64);

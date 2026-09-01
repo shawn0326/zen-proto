@@ -12,13 +12,13 @@ use super::{
     capabilities::MeshletDeviceRequirements,
     config::{
         MESHLET_MAX_TRIANGLES, MESHLET_MAX_VERTICES, MeshletBackend, MeshletCapacityConfig,
-        MeshletConfigError, MeshletRendererConfig, TASK_PACKET_MESHLET_COUNT,
+        MeshletConfigError, MeshletRendererConfig, TASK_MESHLETS_PER_WORKGROUP,
     },
     gpu_scene::{MeshletGpuScene, MeshletGpuSceneUpload},
     gpu_types::{
         BackendWorkCounts, CandidateWork, DispatchIndirectArgs, DrawIndexedIndirectArgs,
         FrameUniform, GpuCounters, GpuLodRecord, GpuMeshRecord, GpuMeshletRecord, GpuVertex,
-        InstanceClassification, PSO_BIN_COUNT, RasterUniform, TaskPacket, VisibleMeshletWork,
+        InstanceClassification, PSO_BIN_COUNT, RasterUniform, VisibleMeshletWork,
         prefix_scan_block_count,
     },
     graph_recorder::MeshletGraphRecorder,
@@ -333,7 +333,7 @@ impl MeshletRenderer {
         let frame = self.frame_uniform(input, width, height, pyramid.mip_level_count());
         let mut coarse_frame = frame;
         coarse_frame.parameters[3] = 0.0;
-        coarse_frame.limits[1] = 0;
+        coarse_frame.hiz_mip_count = 0;
         let raster = self.raster_uniforms(input.camera, input.render_mode);
         self.scene
             .update_uniforms(&self.queue, &frame, &coarse_frame, &raster);
@@ -454,16 +454,14 @@ impl MeshletRenderer {
                 self.scene.capacities.max_candidate_meshlets,
                 self.scene.capacities.max_indirect_draws_per_bin,
             ],
-            limits: [
-                self.scene.capacities.max_task_packets,
-                if input.enable_occlusion_culling {
-                    hiz_mip_count
-                } else {
-                    0
-                },
-                self.max_dispatch_dimension,
-                u32::from(is_perspective_projection(camera.projection())),
-            ],
+            hiz_mip_count: if input.enable_occlusion_culling {
+                hiz_mip_count
+            } else {
+                0
+            },
+            max_dispatch_dimension: self.max_dispatch_dimension,
+            perspective_projection: u32::from(is_perspective_projection(camera.projection())),
+            _pad: 0,
         }
     }
 
@@ -476,9 +474,9 @@ impl MeshletRenderer {
         std::array::from_fn(|bin| RasterUniform {
             view_projection,
             visible_base: bin as u32 * self.scene.capacities.max_indirect_draws_per_bin,
-            task_packet_base: bin as u32 * self.scene.capacities.max_task_packets,
             render_mode: render_mode as u32,
             pso_bin: bin as u32,
+            _pad: 0,
         })
     }
 
@@ -569,12 +567,12 @@ fn validate_asset_shader_contract(asset: &MeshletSceneAsset) -> Result<(), Meshl
     let build = asset.config();
     if build.max_meshlet_vertices != MESHLET_MAX_VERTICES
         || build.max_meshlet_triangles != MESHLET_MAX_TRIANGLES
-        || build.task_packet_meshlets != TASK_PACKET_MESHLET_COUNT
+        || build.task_workgroup_meshlets != TASK_MESHLETS_PER_WORKGROUP
     {
         return Err(MeshletRendererError::UnsupportedAssetBuild {
             vertices: build.max_meshlet_vertices,
             triangles: build.max_meshlet_triangles,
-            packet_meshlets: build.task_packet_meshlets,
+            task_workgroup_meshlets: build.task_workgroup_meshlets,
         });
     }
     Ok(())
@@ -887,10 +885,6 @@ fn validate_gpu_buffer_limits(
             count_bytes::<CandidateWork>(u64::from(capacities.max_candidate_meshlets)),
         ),
         (
-            "task packets",
-            count_bytes::<TaskPacket>(u64::from(capacities.max_task_packets) * two_bins),
-        ),
-        (
             "visible work",
             count_bytes::<VisibleMeshletWork>(u64::from(capacities.max_visible_meshlets)),
         ),
@@ -993,12 +987,12 @@ pub enum MeshletRendererError {
         max_storage_binding_size: u64,
     },
     #[error(
-        "asset was built for {vertices} vertices/{triangles} triangles/{packet_meshlets} packet meshlets; this renderer requires 64/64/32"
+        "asset was built for {vertices} vertices/{triangles} triangles/{task_workgroup_meshlets} task-workgroup meshlets; this renderer requires 64/64/32"
     )]
     UnsupportedAssetBuild {
         vertices: u32,
         triangles: u32,
-        packet_meshlets: u32,
+        task_workgroup_meshlets: u32,
     },
     #[error("scene has {actual} instances but renderer capacity is {capacity}")]
     InstanceCapacityExceeded { actual: usize, capacity: u32 },
@@ -1111,7 +1105,6 @@ mod tests {
                 max_instances: 4,
                 max_candidate_meshlets: 8,
                 max_visible_meshlets: 8,
-                max_task_packets: 4,
                 max_indirect_draws_per_bin: 4,
             },
             auto_benchmark_profile: None,
@@ -1266,7 +1259,7 @@ mod tests {
                 "meshlet.clear-frame-counters",
                 "meshlet.instance-classify-lod-count",
                 "meshlet.prefix-scan",
-                "meshlet.packet-work-scatter",
+                "meshlet.candidate-scatter",
                 "meshlet.coarse-cull",
                 "meshlet.opaque-occluder-depth",
                 "meshlet.indirect-prepare",
@@ -1285,7 +1278,7 @@ mod tests {
                 "meshlet.clear-frame-counters",
                 "meshlet.instance-classify-lod-count",
                 "meshlet.prefix-scan",
-                "meshlet.packet-work-scatter",
+                "meshlet.candidate-scatter",
                 "meshlet.coarse-cull",
                 "meshlet.opaque-occluder-depth",
                 "meshlet.hiz-depth-to-mip0",
@@ -1420,7 +1413,6 @@ mod tests {
             max_instances: 1,
             max_candidate_meshlets: u32::MAX,
             max_visible_meshlets: 2,
-            max_task_packets: 1,
             max_indirect_draws_per_bin: 1,
         };
         let error = validate_gpu_buffer_limits(&device, &asset, 1, 0, capacities).unwrap_err();

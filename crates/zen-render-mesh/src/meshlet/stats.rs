@@ -3,8 +3,7 @@ use std::ops::{BitOr, BitOrAssign};
 use zen_frame_graph::{GpuTimingReport, GpuTimingUnavailableReason};
 
 use super::gpu_types::{
-    OVERFLOW_CANDIDATES, OVERFLOW_DISPATCH, OVERFLOW_TASK_PACKETS, OVERFLOW_VISIBLE_BACKFACE,
-    OVERFLOW_VISIBLE_TWO_SIDED,
+    OVERFLOW_CANDIDATES, OVERFLOW_DISPATCH, OVERFLOW_VISIBLE_BACKFACE, OVERFLOW_VISIBLE_TWO_SIDED,
 };
 
 /// Number of individual LOD levels retained in the fixed-size stats snapshot.
@@ -17,7 +16,6 @@ pub const MESHLET_STATS_READBACK_DELAY_FRAMES: u32 = 3;
 pub enum MeshletCapacityKind {
     Instances,
     CandidateMeshlets,
-    TaskPackets,
     VisibleMeshlets,
     IndirectDraws,
     DispatchWorkgroups,
@@ -29,7 +27,6 @@ impl MeshletCapacityKind {
         match self {
             Self::Instances => MeshletOverflowFlags::INSTANCES,
             Self::CandidateMeshlets => MeshletOverflowFlags::CANDIDATE_MESHLETS,
-            Self::TaskPackets => MeshletOverflowFlags::TASK_PACKETS,
             Self::VisibleMeshlets => MeshletOverflowFlags::VISIBLE_MESHLETS,
             // Indexed draw args and visible work are allocated together, one entry per meshlet.
             Self::IndirectDraws => MeshletOverflowFlags::VISIBLE_MESHLETS,
@@ -48,20 +45,18 @@ pub struct MeshletOverflowFlags(u32);
 
 impl MeshletOverflowFlags {
     pub const NONE: Self = Self(0);
-    // Bits 0 through 4 are part of the GpuCounters/WGSL ABI.
+    // Bits 0 through 3 are part of the GpuCounters/WGSL ABI.
     pub const CANDIDATE_MESHLETS: Self = Self(OVERFLOW_CANDIDATES);
     pub const VISIBLE_BACKFACE: Self = Self(OVERFLOW_VISIBLE_BACKFACE);
     pub const VISIBLE_TWO_SIDED: Self = Self(OVERFLOW_VISIBLE_TWO_SIDED);
     pub const VISIBLE_MESHLETS: Self = Self(Self::VISIBLE_BACKFACE.0 | Self::VISIBLE_TWO_SIDED.0);
-    pub const TASK_PACKETS: Self = Self(OVERFLOW_TASK_PACKETS);
     pub const DISPATCH_WORKGROUPS: Self = Self(OVERFLOW_DISPATCH);
     /// Reserved for a future GPU-side instance arena; current uploads reject excess instances.
-    pub const INSTANCES: Self = Self(1 << 5);
+    pub const INSTANCES: Self = Self(1 << 4);
     pub const ALL: Self = Self(
         Self::CANDIDATE_MESHLETS.0
             | Self::VISIBLE_BACKFACE.0
             | Self::VISIBLE_TWO_SIDED.0
-            | Self::TASK_PACKETS.0
             | Self::DISPATCH_WORKGROUPS.0
             | Self::INSTANCES.0,
     );
@@ -128,7 +123,7 @@ pub struct MeshletGpuPassTimings {
     pub clear_frame_counters_ns: Option<u64>,
     pub instance_classify_lod_count_ns: Option<u64>,
     pub prefix_scan_ns: Option<u64>,
-    pub packet_work_scatter_ns: Option<u64>,
+    pub candidate_scatter_ns: Option<u64>,
     pub coarse_cull_ns: Option<u64>,
     pub occluder_depth_ns: Option<u64>,
     pub hiz_build_ns: Option<u64>,
@@ -146,7 +141,7 @@ impl MeshletGpuPassTimings {
             self.clear_frame_counters_ns,
             self.instance_classify_lod_count_ns,
             self.prefix_scan_ns,
-            self.packet_work_scatter_ns,
+            self.candidate_scatter_ns,
             self.coarse_cull_ns,
             self.occluder_depth_ns,
             self.hiz_build_ns,
@@ -166,7 +161,7 @@ impl MeshletGpuPassTimings {
             "meshlet.clear-frame-counters" => &mut self.clear_frame_counters_ns,
             "meshlet.instance-classify-lod-count" => &mut self.instance_classify_lod_count_ns,
             "meshlet.prefix-scan" => &mut self.prefix_scan_ns,
-            "meshlet.packet-work-scatter" => &mut self.packet_work_scatter_ns,
+            "meshlet.candidate-scatter" => &mut self.candidate_scatter_ns,
             "meshlet.coarse-cull" => &mut self.coarse_cull_ns,
             "meshlet.opaque-occluder-depth" => &mut self.occluder_depth_ns,
             "meshlet.clear-coarse-results" => &mut self.clear_coarse_results_ns,
@@ -271,13 +266,12 @@ pub struct MeshletRenderStats {
     pub conservatively_visible_meshlets: u32,
 
     /// Logical 32-meshlet task groups for `TaskMesh`; zero for the other concrete backends.
-    pub task_packets: u32,
+    pub task_workgroups: u32,
     pub visible_meshlets_per_bin: MeshletPsoBinStats,
     pub indirect_draws_per_bin: MeshletPsoBinStats,
-    /// Logical vertices in the compute-compacted visible set. Compatibility tail work emitted by
-    /// mesh/task stages is intentionally excluded; its cost is reflected in GPU timings.
+    /// Logical vertices in the compute-compacted visible set.
     pub output_vertices: u64,
-    /// Logical primitives in the compute-compacted visible set; excludes compatibility duplicates.
+    /// Logical primitives in the compute-compacted visible set.
     pub output_primitives: u64,
 
     pub overflow: MeshletOverflowFlags,

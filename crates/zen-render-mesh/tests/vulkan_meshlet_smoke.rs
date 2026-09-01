@@ -273,7 +273,6 @@ async fn render_instances(
             max_instances: 64,
             max_candidate_meshlets: 128,
             max_visible_meshlets: 128,
-            max_task_packets: 64,
             max_indirect_draws_per_bin: 64,
         },
         auto_benchmark_profile: None,

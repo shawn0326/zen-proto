@@ -40,13 +40,14 @@ struct FrameUniform {
     viewport: vec4<f32>,
     parameters: vec4<f32>,
     counts: vec4<u32>,
-    limits: vec4<u32>,
+    hiz_mip_count: u32,
+    max_dispatch_dimension: u32,
+    perspective_projection: u32,
+    _pad: u32,
 };
 
 struct Counters {
     candidate_count: atomic<u32>,
-    packet_count_backface: atomic<u32>,
-    packet_count_two_sided: atomic<u32>,
     visible_count_backface: atomic<u32>,
     visible_count_two_sided: atomic<u32>,
     instances_visible: atomic<u32>,
@@ -59,9 +60,6 @@ struct Counters {
     lod_histogram: array<atomic<u32>, 8>,
     lod_overflow_instances: atomic<u32>,
     conservatively_visible_meshlets: atomic<u32>,
-    raster_claim_backface: atomic<u32>,
-    raster_claim_two_sided: atomic<u32>,
-    _pad: array<u32, 8>,
 };
 
 struct CullResult {
@@ -160,7 +158,7 @@ fn sphere_frustum_result(center: vec3<f32>, radius: f32) -> CullResult {
 }
 
 fn cone_cull_result(meshlet: MeshletRecord, instance: InstanceData, center: vec3<f32>, radius: f32) -> CullResult {
-    if (frame.limits.w == 0u) {
+    if (frame.perspective_projection == 0u) {
         // Orthographic rays have a fixed direction. Until that direction is part of the shared
         // ABI, disabling the optional cone test is conservative and cannot create false culls.
         return CullResult(false, false);
@@ -211,7 +209,7 @@ fn cube_corner_offset(index: u32, radius: f32) -> vec3<f32> {
 }
 
 fn sphere_hiz_result(center: vec3<f32>, radius: f32) -> CullResult {
-    if (frame.parameters.w < 0.5 || frame.limits.y == 0u) {
+    if (frame.parameters.w < 0.5 || frame.hiz_mip_count == 0u) {
         return CullResult(false, false);
     }
     if (!finite3(center) || !finite1(radius) || radius < 0.0) {
@@ -241,7 +239,7 @@ fn sphere_hiz_result(center: vec3<f32>, radius: f32) -> CullResult {
     let uv_min = clamp(vec2<f32>(ndc_min.x * 0.5 + 0.5, 0.5 - ndc_max.y * 0.5), vec2<f32>(0.0), vec2<f32>(1.0));
     let uv_max = clamp(vec2<f32>(ndc_max.x * 0.5 + 0.5, 0.5 - ndc_min.y * 0.5), vec2<f32>(0.0), vec2<f32>(1.0));
     let pixel_extent = max((uv_max.x - uv_min.x) * frame.viewport.x, (uv_max.y - uv_min.y) * frame.viewport.y);
-    var mip = min(u32(max(0.0, ceil(log2(max(pixel_extent, 1.0))))), frame.limits.y - 1u);
+    var mip = min(u32(max(0.0, ceil(log2(max(pixel_extent, 1.0))))), frame.hiz_mip_count - 1u);
     var texel_min = vec2<u32>(0u);
     var texel_max = vec2<u32>(0u);
     loop {
@@ -250,7 +248,7 @@ fn sphere_hiz_result(center: vec3<f32>, radius: f32) -> CullResult {
         texel_min = min(vec2<u32>(floor(uv_min * vec2<f32>(dimensions))), last_texel);
         texel_max = min(vec2<u32>(floor(uv_max * vec2<f32>(dimensions))), last_texel);
         if ((texel_max.x - texel_min.x <= 1u && texel_max.y - texel_min.y <= 1u)
-            || mip + 1u >= frame.limits.y) {
+            || mip + 1u >= frame.hiz_mip_count) {
             break;
         }
         mip += 1u;
@@ -274,7 +272,7 @@ fn main(
     @builtin(local_invocation_index) lane: u32,
     @builtin(workgroup_id) group_id: vec3<u32>,
 ) {
-    let candidate_id = (group_id.y * max(frame.limits.z, 1u) + group_id.x) * 64u + lane;
+    let candidate_id = (group_id.y * max(frame.max_dispatch_dimension, 1u) + group_id.x) * 64u + lane;
     let candidate_count = atomicLoad(&counters.candidate_count);
     if (candidate_id >= candidate_count) {
         return;

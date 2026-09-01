@@ -36,9 +36,9 @@ struct Work {
 struct RasterUniform {
     view_projection: mat4x4<f32>,
     visible_base: u32,
-    task_packet_base: u32,
     render_mode: u32,
     pso_bin: u32,
+    _pad: u32,
 };
 
 struct VertexOutput {

@@ -8,7 +8,7 @@ use super::{
         BackendWorkCounts, CandidateWork, DispatchIndirectArgs, DrawIndexedIndirectArgs,
         FRAME_UNIFORM_SIZE, FrameUniform, GpuCounters, GpuLodRecord, GpuMeshRecord,
         GpuMeshletRecord, GpuVertex, InstanceClassification, PSO_BIN_COUNT, RASTER_UNIFORM_STRIDE,
-        RasterUniform, TaskPacket, VisibleMeshletWork, prefix_scan_block_count,
+        RasterUniform, VisibleMeshletWork, prefix_scan_block_count,
     },
 };
 use crate::mesh::{Instance, Material};
@@ -40,7 +40,6 @@ pub(crate) struct MeshletGpuScene {
     pub scan_blocks: wgpu::Buffer,
     pub lod_history: wgpu::Buffer,
     pub candidates: wgpu::Buffer,
-    pub task_packets: wgpu::Buffer,
     pub visible: wgpu::Buffer,
     pub draw_args: wgpu::Buffer,
     pub counters: wgpu::Buffer,
@@ -117,12 +116,6 @@ impl MeshletGpuScene {
                 device,
                 "meshlet.work.candidates",
                 capacities.max_candidate_meshlets,
-                wgpu::BufferUsages::STORAGE,
-            ),
-            task_packets: sized_buffer::<TaskPacket>(
-                device,
-                "meshlet.work.task-packets",
-                capacities.max_task_packets.saturating_mul(PSO_BIN_COUNT),
                 wgpu::BufferUsages::STORAGE,
             ),
             visible: sized_buffer::<VisibleMeshletWork>(
@@ -277,7 +270,6 @@ mod tests {
             max_instances: 4,
             max_candidate_meshlets: 8,
             max_visible_meshlets: 8,
-            max_task_packets: 3,
             max_indirect_draws_per_bin: 4,
         };
         let scene = MeshletGpuScene::new(
@@ -300,10 +292,6 @@ mod tests {
             8 * size_of::<VisibleMeshletWork>() as u64
         );
         assert_eq!(scene.scan_blocks.size(), size_of::<u32>() as u64);
-        assert_eq!(
-            scene.task_packets.size(),
-            6 * size_of::<TaskPacket>() as u64
-        );
         assert_eq!(
             scene.draw_args.size(),
             8 * size_of::<DrawIndexedIndirectArgs>() as u64

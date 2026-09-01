@@ -37,23 +37,20 @@ MeshletRenderer
   .zenmesh v1 asset       checksummed LODs, 64v/64t meshlets, bounds/cones, fallback indices
   MeshletGpuScene         buffer + u32-offset arenas (no BDA or buffer binding arrays)
   BindlessTextureArena    fixed texture/sampler table with generation-checked handles
-  shared GPU front-end    classify/LOD -> scan -> scatter -> cull -> indirect prepare
+  shared GPU front-end    classify/LOD -> scan -> candidate scatter -> cull -> indirect prepare
   IndexedIndirect         multi_draw_indexed_indirect_count per PSO bin
-  MeshOnly                one claimed mesh workgroup per visible meshlet, plus bounded tail padding
-  TaskMesh                fixed 32-child task fanout; child mesh groups claim visible work
+  MeshOnly                one built-in-addressed mesh workgroup per visible meshlet
+  TaskMesh                up to 32 payload-indexed mesh children per task workgroup
 ```
 
-All three backends consume the same compute-compacted visible list. On the validated wgpu
-30/Naga 30 NVIDIA Vulkan path, mesh-stage workgroup/global IDs, dynamically computed task child
-counts, and dynamically empty mesh output are not reliable. MeshOnly and TaskMesh therefore use a
-per-PSO-bin GPU atomic to assign each mesh workgroup a unique visible-list slot. Empty bins still
-dispatch zero work; rectangular MeshOnly padding and TaskMesh's fixed 32-child tail repeat the last
-legal entry. This preserves the logical visible set without a CPU readback. Atomic assignment and
-duplicate-tail work are included in benchmark timing, while `output_vertices` and
-`output_primitives` report logical visible geometry rather than compatibility duplicates.
-`TaskMesh` remains an explicit experimental backend, and `Auto` cannot select it without a matching
-local profile. Task-stage culling/compaction can replace this compatibility path only after the
-relevant wgpu/Naga and driver matrix is proven stable.
+All three backends consume the same compute-compacted visible list. `BackendWorkCounts` is a
+16-byte handoff written by indirect preparation after capacity and device-limit clipping. MeshOnly
+linearizes `workgroup_id` with `num_workgroups` and reads that visible-list entry directly;
+rectangular padding workgroups emit zero vertices and primitives. TaskMesh linearizes each task
+workgroup, copies at most 32 consecutive visible entries into its private payload, returns the real
+remaining child count, and lets each mesh child address the payload with `workgroup_id.x`. Empty
+bins dispatch zero work and padded task groups return zero children. There is no driver-specific
+shader path or runtime driver-version parsing.
 
 The scan stage is a three-dispatch hierarchical exclusive prefix scan: 256-instance local scans,
 a 256-lane scan of evenly partitioned block sums, then parallel block-offset addition. The default
@@ -65,10 +62,51 @@ CPU readback to determine downstream work.
 geometry-bound GPU p95 is at least 10% faster. Backend selection happens before device creation
 and a renderer instance owns one concrete path for its lifetime.
 
-The meshlet renderer accepts Vulkan capabilities only. `IndexedIndirect` uses the ordinary checked
-WGSL runtime path. `MeshOnly` and `TaskMesh` additionally require wgpu's experimental mesh-shader
-feature and a device created with its experimental token. All shaders remain WGSL and are validated
-and translated by Naga; there is no HAL, passthrough SPIR-V, HLSL, MSL, or BDA path.
+### Capability baseline
+
+Hardware support is defined by Vulkan features and numeric limits, not a GPU product generation.
+The application must satisfy the following adapter contract before requesting the device:
+
+| Requirement | IndexedIndirect | MeshOnly | TaskMesh |
+| --- | --- | --- | --- |
+| wgpu backend | Vulkan | Vulkan | Vulkan |
+| downlevel flag | `INDIRECT_EXECUTION` | `INDIRECT_EXECUTION` | `INDIRECT_EXECUTION` |
+| bindless/indirect features | `TEXTURE_BINDING_ARRAY`, `PARTIALLY_BOUND_BINDING_ARRAY`, non-uniform sampled-texture/storage-buffer array indexing, `MULTI_DRAW_INDIRECT_COUNT`, `INDIRECT_FIRST_INSTANCE` | same | same |
+| experimental opt-in | none | `EXPERIMENTAL_MESH_SHADER` plus the unsafe experimental token | same |
+| mesh stage | n/a | at least 64 invocations, X dimension 64, 64 output vertices, 64 output primitives | same |
+| task stage | n/a | n/a | at least 32 invocations, X dimension 32, 512-byte payload |
+| child/dispatch capacity | n/a | non-zero mesh total and per-dimension limits | mesh total and per-dimension limits at least 32; non-zero task total and per-dimension limits |
+
+Bindless table sizes are clamped to the adapter's binding-array and sampler limits. All shaders use
+checked WGSL translated by Naga; there is no renderer HAL, passthrough SPIR-V, HLSL, MSL, BDA, or
+driver-version compatibility path. Applications may still supply an exact, application-owned
+`MeshletDriverBlacklist`; the built-in blacklist remains empty.
+
+### Hardware qualification and known issues
+
+`tests/vulkan_mesh_shader_probe.rs` is the release/merge gate for experimental backends. MeshOnly
+requires the static SPIR-V interface check, original dispatch-builtin probe, and rectangular empty
+output probe to pass. TaskMesh additionally requires the dynamic child-count/payload-isolation
+probe. A failing backend must be disabled (and excluded from `Auto`) through an exact application
+blacklist or by withholding that build; compatibility shaders are not accepted.
+
+| Environment | Builtins | Empty mesh output | Dynamic task children/payload | Status |
+| --- | --- | --- | --- | --- |
+| Windows, RTX 2080 Ti, NVIDIA 616.56, wgpu/Naga 30 | pass | pass | pass | minimum NVIDIA baseline verified by this project |
+| Windows, RTX 2080 Ti, NVIDIA 565.90, wgpu/Naga 30 | fail | not qualifying | not qualifying | known bad |
+
+On 565.90, NVIDIA compiled dispatch builtins loaded in Naga's MeshEXT wrapper call tree to incorrect
+values even though the emitted SPIR-V declared distinct builtin variables and entry-point interface
+IDs. The same original Naga SPIR-V path passes on 616.56. The diagnostic SPIR-V binary rewriter used
+to isolate that driver failure is intentionally not part of the maintained probe or renderer.
+
+Run the static and opt-in hardware gates with:
+
+```text
+cargo test -p zen-render-mesh --test vulkan_mesh_shader_probe
+cargo test -p zen-render-mesh --test vulkan_mesh_shader_probe -- --ignored --nocapture
+cargo test -p zen-render-mesh --test vulkan_meshlet_smoke -- --ignored --nocapture
+```
 
 The workspace carries a source patch for `wgpu-hal` 30.0.1 because that release's Vulkan resource
 barriers omit the task/mesh pipeline stages. This is a dependency-level synchronization correction;

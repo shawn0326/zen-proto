@@ -17,13 +17,14 @@ struct FrameUniform {
     viewport: vec4<f32>,
     parameters: vec4<f32>,
     counts: vec4<u32>,
-    limits: vec4<u32>,
+    hiz_mip_count: u32,
+    max_dispatch_dimension: u32,
+    perspective_projection: u32,
+    _pad: u32,
 };
 
 struct Counters {
     candidate_count: atomic<u32>,
-    packet_count_backface: atomic<u32>,
-    packet_count_two_sided: atomic<u32>,
     visible_count_backface: atomic<u32>,
     visible_count_two_sided: atomic<u32>,
     instances_visible: atomic<u32>,
@@ -36,9 +37,6 @@ struct Counters {
     lod_histogram: array<atomic<u32>, 8>,
     lod_overflow_instances: atomic<u32>,
     conservatively_visible_meshlets: atomic<u32>,
-    raster_claim_backface: atomic<u32>,
-    raster_claim_two_sided: atomic<u32>,
-    _pad: array<u32, 8>,
 };
 
 @group(0) @binding(0) var<storage, read_write> counters: Counters;
@@ -67,7 +65,7 @@ fn flattened_dispatch(count: u32, total_limit: u32, dispatch_width: u32) -> Disp
     let width = max(dispatch_width, 1u);
     if (safe_count <= width) {
         if (safe_count < count) {
-            atomicOr(&counters.overflow, 16u);
+            atomicOr(&counters.overflow, 8u);
         }
         return DispatchIndirectArgs(safe_count, 1u, 1u);
     }
@@ -76,7 +74,7 @@ fn flattened_dispatch(count: u32, total_limit: u32, dispatch_width: u32) -> Disp
     // stage limits. Consequently the padded final row remains within the total-workgroup limit.
     let rows = safe_count / width + select(0u, 1u, (safe_count % width) != 0u);
     if (safe_count < count) {
-        atomicOr(&counters.overflow, 16u);
+        atomicOr(&counters.overflow, 8u);
     }
     return DispatchIndirectArgs(width, rows, 1u);
 }
@@ -93,7 +91,7 @@ fn clamped_task_meshlet_count(count: u32) -> u32 {
     let meshlet_capacity = safe_group_capacity * TASK_MESHLETS_PER_WORKGROUP;
     let safe_count = min(count, meshlet_capacity);
     if (safe_count < count) {
-        atomicOr(&counters.overflow, 16u);
+        atomicOr(&counters.overflow, 8u);
     }
     return safe_count;
 }

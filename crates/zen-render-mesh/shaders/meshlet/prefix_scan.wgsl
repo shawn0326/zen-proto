@@ -6,13 +6,14 @@ struct FrameUniform {
     viewport: vec4<f32>,
     parameters: vec4<f32>,
     counts: vec4<u32>,
-    limits: vec4<u32>,
+    hiz_mip_count: u32,
+    max_dispatch_dimension: u32,
+    perspective_projection: u32,
+    _pad: u32,
 };
 
 struct Counters {
     candidate_count: atomic<u32>,
-    packet_count_backface: atomic<u32>,
-    packet_count_two_sided: atomic<u32>,
     visible_count_backface: atomic<u32>,
     visible_count_two_sided: atomic<u32>,
     instances_visible: atomic<u32>,
@@ -25,9 +26,6 @@ struct Counters {
     lod_histogram: array<atomic<u32>, 8>,
     lod_overflow_instances: atomic<u32>,
     conservatively_visible_meshlets: atomic<u32>,
-    raster_claim_backface: atomic<u32>,
-    raster_claim_two_sided: atomic<u32>,
-    _pad: array<u32, 8>,
 };
 
 struct InstanceClassification {
@@ -67,7 +65,7 @@ fn instance_block_count() -> u32 {
 }
 
 fn linear_workgroup_id(group_id: vec3<u32>) -> u32 {
-    return group_id.y * max(frame.limits.z, 1u) + group_id.x;
+    return group_id.y * max(frame.max_dispatch_dimension, 1u) + group_id.x;
 }
 
 // Every invocation must call this function together. The two barriers per step prevent an
@@ -161,7 +159,7 @@ fn scan_block_sums(@builtin(local_invocation_index) lane: u32) {
 
         // Avoid `clamped + 63` overflow when a device exposes a capacity near u32::MAX.
         let groups = clamped / 64u + select(0u, 1u, (clamped % 64u) != 0u);
-        let max_dimension = max(frame.limits.z, 1u);
+        let max_dimension = max(frame.max_dispatch_dimension, 1u);
         candidate_dispatch.x = min(groups, max_dimension);
         let complete_rows = groups / max_dimension;
         let rounded_rows = complete_rows + select(0u, 1u, (groups % max_dimension) != 0u);
@@ -169,13 +167,13 @@ fn scan_block_sums(@builtin(local_invocation_index) lane: u32) {
         candidate_dispatch.z = 1u;
         if (candidate_dispatch.y > max_dimension) {
             candidate_dispatch.y = max_dimension;
-            atomicOr(&counters.overflow, 16u);
+            atomicOr(&counters.overflow, 8u);
         }
     }
 }
 
 // Stage 3: turn each block-relative exclusive prefix into the global exclusive prefix expected by
-// packet/work scatter. All arithmetic is saturated before the configured capacity clamp.
+// candidate scatter. All arithmetic is saturated before the configured capacity clamp.
 @compute @workgroup_size(256)
 fn add_block_offsets(
     @builtin(local_invocation_index) lane: u32,

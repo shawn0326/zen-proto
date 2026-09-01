@@ -11,6 +11,10 @@ Prototype GPU-driven renderer in Rust using wgpu.
   passes.
 - `apps/zen-demo`: concrete forward frame composition, window-surface integration, and assets.
 
+The authoritative Meshlet hardware requirements, validation matrix, and known driver issues are in
+[`crates/zen-render-mesh/README.md`](crates/zen-render-mesh/README.md). Meshlet demo, probe, and
+benchmark commands are in [`apps/zen-demo/MESHLET.md`](apps/zen-demo/MESHLET.md).
+
 Run the demos from the workspace root:
 
 ```shell

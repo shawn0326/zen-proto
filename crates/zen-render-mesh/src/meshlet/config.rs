@@ -16,8 +16,8 @@ pub const MESHLET_FALLBACK_SAMPLER_SLOTS: u32 = 1;
 pub const MESHLET_MAX_VERTICES: u32 = 64;
 /// Default and currently supported maximum number of triangles in one meshlet.
 pub const MESHLET_MAX_TRIANGLES: u32 = 64;
-/// Number of candidate meshlets processed by one task workgroup.
-pub const TASK_PACKET_MESHLET_COUNT: u32 = 32;
+/// Maximum number of visible meshlets carried by one task workgroup payload.
+pub const TASK_MESHLETS_PER_WORKGROUP: u32 = 32;
 
 /// A concrete raster backend owned by `MeshletRenderer`, or its benchmark-gated automatic mode.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
@@ -166,7 +166,6 @@ pub struct MeshletCapacityConfig {
     pub max_instances: u32,
     pub max_candidate_meshlets: u32,
     pub max_visible_meshlets: u32,
-    pub max_task_packets: u32,
     pub max_indirect_draws_per_bin: u32,
 }
 
@@ -176,7 +175,6 @@ impl Default for MeshletCapacityConfig {
             max_instances: 262_144,
             max_candidate_meshlets: 2_097_152,
             max_visible_meshlets: 1_048_576,
-            max_task_packets: 65_536,
             max_indirect_draws_per_bin: 524_288,
         }
     }
@@ -188,7 +186,6 @@ impl MeshletCapacityConfig {
             ("max_instances", self.max_instances),
             ("max_candidate_meshlets", self.max_candidate_meshlets),
             ("max_visible_meshlets", self.max_visible_meshlets),
-            ("max_task_packets", self.max_task_packets),
             (
                 "max_indirect_draws_per_bin",
                 self.max_indirect_draws_per_bin,
@@ -232,13 +229,6 @@ impl MeshletCapacityConfig {
                 maximum_per_meshlet: MESHLET_MAX_VERTICES.max(MESHLET_MAX_TRIANGLES),
             });
         }
-
-        self.max_task_packets.checked_mul(2).ok_or(
-            MeshletConfigError::CapacityAddressSpaceOverflow {
-                name: "max_task_packets",
-                per_bin: self.max_task_packets,
-            },
-        )?;
 
         Ok(())
     }
@@ -470,25 +460,9 @@ mod tests {
         ));
 
         let capacities = MeshletCapacityConfig {
-            max_candidate_meshlets: 100,
-            max_visible_meshlets: 2,
-            max_indirect_draws_per_bin: 1,
-            max_task_packets: u32::MAX,
-            ..Default::default()
-        };
-        assert!(matches!(
-            capacities.validate(),
-            Err(MeshletConfigError::CapacityAddressSpaceOverflow {
-                name: "max_task_packets",
-                ..
-            })
-        ));
-
-        let capacities = MeshletCapacityConfig {
             max_candidate_meshlets: 67_108_864,
             max_visible_meshlets: 67_108_864,
             max_indirect_draws_per_bin: 33_554_432,
-            max_task_packets: 1,
             ..Default::default()
         };
         assert!(matches!(

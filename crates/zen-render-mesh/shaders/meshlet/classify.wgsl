@@ -28,13 +28,14 @@ struct FrameUniform {
     viewport: vec4<f32>,
     parameters: vec4<f32>,
     counts: vec4<u32>,
-    limits: vec4<u32>,
+    hiz_mip_count: u32,
+    max_dispatch_dimension: u32,
+    perspective_projection: u32,
+    _pad: u32,
 };
 
 struct Counters {
     candidate_count: atomic<u32>,
-    packet_count_backface: atomic<u32>,
-    packet_count_two_sided: atomic<u32>,
     visible_count_backface: atomic<u32>,
     visible_count_two_sided: atomic<u32>,
     instances_visible: atomic<u32>,
@@ -47,9 +48,6 @@ struct Counters {
     lod_histogram: array<atomic<u32>, 8>,
     lod_overflow_instances: atomic<u32>,
     conservatively_visible_meshlets: atomic<u32>,
-    raster_claim_backface: atomic<u32>,
-    raster_claim_two_sided: atomic<u32>,
-    _pad: array<u32, 8>,
 };
 
 struct InstanceClassification {
@@ -121,7 +119,7 @@ fn vertical_focal_pixels() -> f32 {
 
 fn projected_error(lod: LodRecord, model: mat4x4<f32>, focal_pixels: f32) -> f32 {
     let numerator = lod.geometric_error * conservative_model_scale(model) * focal_pixels;
-    if (frame.limits.w == 0u) {
+    if (frame.perspective_projection == 0u) {
         // Orthographic projected error is independent of camera distance. Unknown/custom
         // projections are deliberately treated as orthographic so LOD selection stays
         // conservative instead of applying a perspective divide that may be invalid.
@@ -138,7 +136,7 @@ fn main(
     @builtin(local_invocation_index) lane: u32,
     @builtin(workgroup_id) group_id: vec3<u32>,
 ) {
-    let instance_id = (group_id.y * max(frame.limits.z, 1u) + group_id.x) * 64u + lane;
+    let instance_id = (group_id.y * max(frame.max_dispatch_dimension, 1u) + group_id.x) * 64u + lane;
     if (instance_id >= frame.counts.x) {
         return;
     }

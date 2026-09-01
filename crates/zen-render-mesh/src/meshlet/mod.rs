@@ -79,8 +79,8 @@ mod shader_tests {
                 include_str!("../../shaders/meshlet/prefix_scan.wgsl"),
             ),
             (
-                "scatter",
-                include_str!("../../shaders/meshlet/scatter.wgsl"),
+                "candidate_scatter",
+                include_str!("../../shaders/meshlet/candidate_scatter.wgsl"),
             ),
             ("cull", include_str!("../../shaders/meshlet/cull.wgsl")),
             (
@@ -123,25 +123,20 @@ mod shader_tests {
 
     #[test]
     fn every_counter_shader_matches_the_rust_counter_abi() {
-        let expected_offsets: [(&str, u32); 18] = [
+        let expected_offsets: [(&str, u32); 13] = [
             ("candidate_count", 0),
-            ("packet_count_backface", 4),
-            ("packet_count_two_sided", 8),
-            ("visible_count_backface", 12),
-            ("visible_count_two_sided", 16),
-            ("instances_visible", 20),
-            ("culled_frustum", 24),
-            ("culled_cone", 28),
-            ("culled_hiz", 32),
-            ("output_vertices", 36),
-            ("output_primitives", 40),
-            ("overflow", 44),
-            ("lod_histogram", 48),
-            ("lod_overflow_instances", 80),
-            ("conservatively_visible_meshlets", 84),
-            ("raster_claim_backface", 88),
-            ("raster_claim_two_sided", 92),
-            ("_pad", 96),
+            ("visible_count_backface", 4),
+            ("visible_count_two_sided", 8),
+            ("instances_visible", 12),
+            ("culled_frustum", 16),
+            ("culled_cone", 20),
+            ("culled_hiz", 24),
+            ("output_vertices", 28),
+            ("output_primitives", 32),
+            ("overflow", 36),
+            ("lod_histogram", 40),
+            ("lod_overflow_instances", 72),
+            ("conservatively_visible_meshlets", 76),
         ];
 
         for (label, source) in [
@@ -154,15 +149,14 @@ mod shader_tests {
                 include_str!("../../shaders/meshlet/prefix_scan.wgsl"),
             ),
             (
-                "scatter",
-                include_str!("../../shaders/meshlet/scatter.wgsl"),
+                "candidate_scatter",
+                include_str!("../../shaders/meshlet/candidate_scatter.wgsl"),
             ),
             ("cull", include_str!("../../shaders/meshlet/cull.wgsl")),
             (
                 "indirect_prepare",
                 include_str!("../../shaders/meshlet/indirect_prepare.wgsl"),
             ),
-            ("mesh", include_str!("../../shaders/meshlet/mesh.wgsl")),
         ] {
             let module = naga::front::wgsl::parse_str(source)
                 .unwrap_or_else(|error| panic!("{label} failed WGSL parsing: {error:?}"));
@@ -206,6 +200,10 @@ mod shader_tests {
         // cull reasons or conservative visibility in its raster shader.
         let mesh = include_str!("../../shaders/meshlet/mesh.wgsl");
         assert!(!mesh.contains("atomicAdd(&counters.culled_"));
+
+        let prefix_scan = include_str!("../../shaders/meshlet/prefix_scan.wgsl");
+        assert!(prefix_scan.contains("atomicOr(&counters.overflow, 8u)"));
+        assert!(!prefix_scan.contains("atomicOr(&counters.overflow, 16u)"));
     }
 
     #[test]
@@ -223,7 +221,10 @@ mod shader_tests {
         assert_eq!(destination(u32::MAX, 0, u32::MAX), None);
         assert_eq!(destination(7, u32::MAX, u32::MAX), None);
 
-        let scatter = include_str!("../../shaders/meshlet/scatter.wgsl");
-        assert!(scatter.contains("offset < frame.counts.z && local < frame.counts.z - offset"));
+        let candidate_scatter = include_str!("../../shaders/meshlet/candidate_scatter.wgsl");
+        assert!(
+            candidate_scatter
+                .contains("offset < frame.counts.z && local < frame.counts.z - offset")
+        );
     }
 }

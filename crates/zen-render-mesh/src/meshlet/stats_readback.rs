@@ -1,4 +1,4 @@
-use super::config::{MeshletBackend, TASK_PACKET_MESHLET_COUNT};
+use super::config::{MeshletBackend, TASK_MESHLETS_PER_WORKGROUP};
 use super::gpu_types::GpuCounters;
 use super::stats::{
     MESHLET_STATS_READBACK_DELAY_FRAMES, MeshletGpuFrameTimings, MeshletGpuTimingError,
@@ -323,17 +323,14 @@ impl MeshletStatsReadback {
             opaque_backface: counters.visible_count_backface,
             opaque_two_sided: counters.visible_count_two_sided,
         };
-        // TaskMesh currently uses the compute-compacted visible list directly. Report logical
-        // fixed-fanout task groups so the public statistic remains useful without reviving the
-        // retired packet buffer/counters used by the original shader-side compaction experiment.
-        let task_packets = if backend == MeshletBackend::TaskMesh {
+        let task_workgroups = if backend == MeshletBackend::TaskMesh {
             counters
                 .visible_count_backface
-                .div_ceil(TASK_PACKET_MESHLET_COUNT)
+                .div_ceil(TASK_MESHLETS_PER_WORKGROUP)
                 .saturating_add(
                     counters
                         .visible_count_two_sided
-                        .div_ceil(TASK_PACKET_MESHLET_COUNT),
+                        .div_ceil(TASK_MESHLETS_PER_WORKGROUP),
                 )
         } else {
             0
@@ -353,7 +350,7 @@ impl MeshletStatsReadback {
             normal_cone_culled_meshlets: counters.culled_cone,
             hiz_culled_meshlets: counters.culled_hiz,
             conservatively_visible_meshlets: counters.conservatively_visible_meshlets,
-            task_packets,
+            task_workgroups,
             visible_meshlets_per_bin,
             // The indexed fallback emits exactly one indirect draw per visible meshlet. Mesh paths
             // retain this logical count so comparisons use the same unit.
@@ -415,8 +412,6 @@ mod tests {
     fn counter_decode_preserves_bins_and_saturates_totals() {
         let counters = GpuCounters {
             candidate_count: 17,
-            packet_count_backface: 2,
-            packet_count_two_sided: 3,
             visible_count_backface: u32::MAX,
             visible_count_two_sided: 1,
             instances_visible: 4,
@@ -437,7 +432,7 @@ mod tests {
         assert_eq!(stats.total_instances, 12);
         assert_eq!(stats.classified_instances, 12);
         assert_eq!(stats.visible_meshlets, u32::MAX);
-        assert_eq!(stats.task_packets, 134_217_729);
+        assert_eq!(stats.task_workgroups, 134_217_729);
         assert_eq!(stats.visible_meshlets_per_bin.opaque_two_sided, 1);
         assert_eq!(stats.indirect_draws_per_bin, stats.visible_meshlets_per_bin);
         assert_eq!(stats.lod_overflow_instances, 11);
