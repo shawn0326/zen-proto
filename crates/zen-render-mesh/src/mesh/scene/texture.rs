@@ -503,7 +503,7 @@ impl TextureSampler {
 
 pub(crate) struct TextureStorage {
     max_texture_count: u32,
-    textures: Vec<wgpu::Texture>,
+    _textures: Vec<wgpu::Texture>,
     views: Vec<wgpu::TextureView>,
     samplers: Vec<wgpu::Sampler>,
 }
@@ -581,7 +581,7 @@ impl TextureStorage {
 
         Ok(Self {
             max_texture_count,
-            textures: gpu_textures,
+            _textures: gpu_textures,
             views,
             samplers: gpu_samplers,
         })
@@ -593,10 +593,6 @@ impl TextureStorage {
 
     pub fn max_sampler_count(&self) -> u32 {
         self.samplers.len() as u32
-    }
-
-    pub fn textures(&self) -> &[wgpu::Texture] {
-        &self.textures
     }
 
     pub fn texture_views(&self) -> &[wgpu::TextureView] {

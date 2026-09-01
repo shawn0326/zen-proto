@@ -1,6 +1,6 @@
 use crate::camera::Camera;
 use crate::mesh::{
-    frame::{MeshGraphResources, MeshRenderTargets, VisibilityListHandles},
+    frame::{MeshRenderTargets, VisibilityListHandles},
     scene::{Instance, Material, MeshGpuScene, VertexPacked},
     visibility::VisibilityList,
 };
@@ -19,10 +19,6 @@ pub struct MeshDrawPass {
 }
 
 impl MeshDrawPass {
-    pub(crate) fn camera_buffer(&self) -> &wgpu::Buffer {
-        &self.camera_buffer
-    }
-
     pub fn new(
         device: &wgpu::Device,
         surface_format: wgpu::TextureFormat,
@@ -273,7 +269,6 @@ impl MeshDrawPass {
         frame: &mut Frame<'frame>,
         label: impl Into<String>,
         targets: MeshRenderTargets<'frame>,
-        resources: &MeshGraphResources<'frame>,
         handles: VisibilityListHandles<'frame>,
         list: &'frame VisibilityList,
         scene: &'frame MeshGpuScene,
@@ -283,14 +278,6 @@ impl MeshDrawPass {
     ) -> Result<(), FrameGraphError> {
         let mut pass = frame.render_pass(label);
         pass.set_side_effect(false);
-        for buffer in [resources.vertices, resources.materials, resources.instances] {
-            let _ = pass.storage_buffer_read(buffer, BufferRange::whole())?;
-        }
-        let _ = pass.uniform_buffer(resources.camera_uniform, BufferRange::whole())?;
-        for texture in &resources.scene_textures {
-            let _ = pass.sampled_texture(*texture)?;
-        }
-        let _ = pass.index_buffer(resources.indices, BufferRange::whole())?;
         let _ = pass.indirect_buffer(handles.draw_args, BufferRange::whole())?;
         let _ = pass.indirect_buffer(handles.draw_count, BufferRange::whole())?;
 

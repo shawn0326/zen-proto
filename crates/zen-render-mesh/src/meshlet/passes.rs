@@ -33,7 +33,8 @@ pub(crate) struct MeshletPassSet {
     mesh: Option<MeshRasterPipelines>,
 
     hiz_sampler: wgpu::Sampler,
-    dummy_hiz_texture: wgpu::Texture,
+    _dummy_hiz_texture: wgpu::Texture,
+    dummy_hiz_view: wgpu::TextureView,
 }
 
 struct ComputeStage {
@@ -247,6 +248,7 @@ impl MeshletPassSet {
             usage: wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
+        let dummy_hiz_view = dummy_hiz_texture.create_view(&wgpu::TextureViewDescriptor::default());
         Self {
             // This value is shared with FrameUniform. For mesh backends it is the minimum of the
             // compute, mesh, and (where applicable) task limits, so every 2-D dispatch stays legal.
@@ -261,13 +263,14 @@ impl MeshletPassSet {
             indexed_final,
             mesh,
             hiz_sampler,
-            dummy_hiz_texture,
+            _dummy_hiz_texture: dummy_hiz_texture,
+            dummy_hiz_view,
         }
     }
 
     /// Hi-Z-disabled placeholder used by coarse culling and non-occlusion frames.
-    pub(crate) fn dummy_hiz_texture(&self) -> &wgpu::Texture {
-        &self.dummy_hiz_texture
+    pub(crate) fn dummy_hiz_view(&self) -> &wgpu::TextureView {
+        &self.dummy_hiz_view
     }
 
     pub(crate) fn encode_classify(

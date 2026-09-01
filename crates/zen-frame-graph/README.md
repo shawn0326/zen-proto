@@ -155,15 +155,20 @@ execution callback. They must not be cloned or retained after that callback;
 `wgpu` handle cloning cannot be completely prohibited by Rust lifetimes.
 
 Imported resources remain caller-owned and may be referenced by long-lived bind
-groups or native handles, but every node that uses them must declare the matching
-FrameGraph access. A transient resource must instead be resolved from the
-current callback's typed token and must never be cached across callbacks or
-frames. When several renderer domains share one native resource, the frame
-composer should import it once and pass the same logical handle to each domain.
+groups or native handles. Register one only when its logical handle carries
+dataflow, ordering, or lifetime between graph nodes or renderer domains. Native
+scene buffers, uniforms, bindless tables, caches, pools, and node-local scratch
+that stay inside one renderer should be captured and bound directly by that
+renderer's execution callback; mirroring them in the graph adds no dependency.
+A transient resource must instead be resolved from the current callback's typed
+token and must never be cached across callbacks or frames. When several renderer
+domains share one native resource, the frame composer should import it once and
+pass the same logical handle to each domain.
 
-Bindless sampled-texture tables use the same declaration rule without requiring
-thousands of per-pass texture accesses. Register the externally owned table once
-per frame, then declare one whole-table read in every pass that can index it:
+`TextureSet` is available for compositions where an opaque sampled-texture table
+is itself passed between renderer domains and that whole-table relationship is
+useful in reports. It should not be created merely because a renderer owns a
+bindless table or texture pool:
 
 ```rust
 # use zen_frame_graph::{CompileOptions, FrameGraph, TextureSetDesc};
@@ -171,7 +176,7 @@ let mut graph = FrameGraph::new();
 let mut frame = graph.begin_frame();
 let textures = frame.import_texture_set(TextureSetDesc::new("resident textures", 4096))?;
 
-let mut pass = frame.compute_pass("material classify");
+let mut pass = frame.compute_pass("cross-domain material classify");
 pass.set_side_effect(true);
 let _textures = pass.bindless_texture_set(textures)?;
 pass.finish()?;

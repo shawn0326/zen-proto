@@ -62,14 +62,10 @@ impl<'frame> MeshGraphRecorder<'frame> {
             .map(|index| stats.staging_buffer(index));
         let resources = MeshGraphResources::register(
             frame,
-            scene,
             &visibility.list_a,
             &visibility.list_b,
             &visibility.history,
-            hiz,
-            passes.main_cull.uniform_buffer(),
-            passes.occlusion_cull.uniform_buffer(),
-            passes.draw.camera_buffer(),
+            prepared.enable_occlusion_culling.then_some(hiz),
             readback_buffer,
         )?;
 
@@ -95,7 +91,6 @@ impl<'frame> MeshGraphRecorder<'frame> {
             frame,
             "draw-a",
             targets,
-            &resources,
             resources.list_a,
             &visibility.list_a,
             scene,
@@ -139,7 +134,6 @@ impl<'frame> MeshGraphRecorder<'frame> {
                 frame,
                 "draw-b",
                 targets,
-                &resources,
                 resources.list_b,
                 &visibility.list_b,
                 scene,
@@ -173,7 +167,6 @@ impl<'frame> MeshGraphRecorder<'frame> {
                     frame,
                     "debug-draw-a",
                     targets,
-                    &resources,
                     resources.list_a,
                     &visibility.list_a,
                     scene,
@@ -185,7 +178,6 @@ impl<'frame> MeshGraphRecorder<'frame> {
                     frame,
                     "debug-draw-b",
                     targets,
-                    &resources,
                     resources.list_b,
                     &visibility.list_b,
                     scene,
@@ -434,18 +426,39 @@ mod tests {
             resource("depth-transient").origin,
             ResourceOrigin::Transient
         );
-        assert_eq!(resource("hiz-transient").origin, ResourceOrigin::Transient);
         assert_eq!(
             resource("depth-transient").effective_usage,
             ResourceUsage::Texture(wgpu::TextureUsages::RENDER_ATTACHMENT)
         );
-        assert_eq!(resource("hiz-transient").lifetime, None);
-        assert_eq!(resource("hiz-transient").allocation, None);
         assert_eq!(
             resource("surface-color").debug_group,
             Some(group("Frame Targets").id)
         );
-        assert_eq!(resource("hiz-transient").debug_group, None);
+        assert!(
+            report
+                .resources
+                .iter()
+                .all(|resource| resource.label != "hiz-transient")
+        );
+        for renderer_owned in [
+            "meshes.vertices",
+            "meshes.indices",
+            "meshes.table",
+            "materials",
+            "instances",
+            "scene-texture-0",
+            "main-cull.uniform",
+            "occlusion.uniform",
+            "draw.camera",
+        ] {
+            assert!(
+                report
+                    .resources
+                    .iter()
+                    .all(|resource| resource.label != renderer_owned),
+                "renderer-owned resource {renderer_owned} must not be registered with the graph"
+            );
+        }
     }
 
     #[test]

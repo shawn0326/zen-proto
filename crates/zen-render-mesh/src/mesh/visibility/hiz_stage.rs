@@ -214,11 +214,11 @@ impl HiZStage {
         resources: &MeshGraphResources<'frame>,
         pyramid: HiZPyramidDesc,
     ) -> Result<(), FrameGraphError> {
+        let hiz = resources.hiz()?;
         let mut pass = frame.compute_pass(label);
         pass.set_side_effect(false);
         let source = pass.sampled_texture(targets.depth)?;
-        let destination =
-            pass.storage_texture_write(resources.hiz.views[0], WriteContents::Overwrite)?;
+        let destination = pass.storage_texture_write(hiz.views[0], WriteContents::Overwrite)?;
         pass.finish_compute(move |mut context| {
             let source = context.resources.texture_view(source)?;
             let destination = context.resources.texture_view(destination)?;
@@ -247,20 +247,17 @@ impl HiZStage {
                 message: "Hi-Z mip-to-mip destination must be greater than zero".into(),
             }
         })?;
-        let source_view = *resources
-            .hiz
-            .views
-            .get(source_mip as usize)
-            .ok_or_else(|| FrameGraphError::InvalidResourceDescriptor {
+        let hiz = resources.hiz()?;
+        let source_view = *hiz.views.get(source_mip as usize).ok_or_else(|| {
+            FrameGraphError::InvalidResourceDescriptor {
                 message: format!("Hi-Z source mip {source_mip} is unavailable"),
-            })?;
-        let destination_view = *resources
-            .hiz
-            .views
-            .get(destination_mip as usize)
-            .ok_or_else(|| FrameGraphError::InvalidResourceDescriptor {
+            }
+        })?;
+        let destination_view = *hiz.views.get(destination_mip as usize).ok_or_else(|| {
+            FrameGraphError::InvalidResourceDescriptor {
                 message: format!("Hi-Z destination mip {destination_mip} is unavailable"),
-            })?;
+            }
+        })?;
 
         let mut pass = frame.compute_pass(label);
         pass.set_side_effect(false);

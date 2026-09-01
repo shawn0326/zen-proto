@@ -71,10 +71,13 @@ pub struct BufferDesc {
     pub usage: UsagePolicy<wgpu::BufferUsages>,
 }
 
-/// Recording-time metadata for an externally owned bindless texture table.
+/// Recording-time metadata for an externally owned bindless texture table that is passed between
+/// renderer domains.
 ///
 /// A texture set is an opaque logical resource: the caller owns the bind group
 /// and its resident texture views, while the FrameGraph tracks whole-set reads.
+/// Renderer-private bindless tables and texture pools should remain native renderer state rather
+/// than being mirrored here.
 /// `texture_count` is diagnostic metadata and includes any reserved fallback
 /// slots present in the table.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -24,10 +24,6 @@ pub struct OcclusionCullPass {
 }
 
 impl OcclusionCullPass {
-    pub(crate) fn uniform_buffer(&self) -> &wgpu::Buffer {
-        &self.uniform_buffer
-    }
-
     pub fn new(device: &wgpu::Device) -> Self {
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("occlusion_cull.uniform.buffer"),
@@ -200,12 +196,7 @@ impl OcclusionCullPass {
     ) -> Result<(), FrameGraphError> {
         let mut pass = frame.compute_pass(label);
         pass.set_side_effect(false);
-        for buffer in [
-            handles.visible_instances,
-            resources.instances,
-            resources.mesh_table,
-            handles.visible_count,
-        ] {
+        for buffer in [handles.visible_instances, handles.visible_count] {
             let _ = pass.storage_buffer_read(buffer, BufferRange::whole())?;
         }
         let _ = pass.storage_buffer_write(
@@ -213,8 +204,7 @@ impl OcclusionCullPass {
             BufferRange::whole(),
             WriteContents::Preserve,
         )?;
-        let hiz_access = pass.sampled_texture(resources.hiz.texture)?;
-        let _ = pass.uniform_buffer(resources.occlusion_uniform, BufferRange::whole())?;
+        let hiz_access = pass.sampled_texture(resources.hiz()?.texture)?;
         let _ = pass.indirect_buffer(handles.dispatch_args, BufferRange::whole())?;
         pass.finish_compute(move |mut context| {
             let hiz_view = context.resources.texture_view(hiz_access)?;

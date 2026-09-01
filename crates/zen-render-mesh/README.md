@@ -14,12 +14,14 @@ MeshRenderer
   HiZStage                 multi-node depth-pyramid construction
   MeshPassSet              cull, indirect preparation, occlusion, and draw passes
   MeshGraphRecorder        Mesh node ordering, optional branches, and roots
-  MeshGraphResources       per-frame logical handles for Mesh-owned GPU resources
+  MeshGraphResources       per-frame handles for graph-visible handoff resources
 ```
 
-Each ordinary `*Pass::record` method contributes exactly one FrameGraph node and declares its
-complete resource access contract. `HiZStage` is intentionally a stage rather than a pass: it owns
-the full depth-pyramid operation and contributes one node per mip while preserving the existing
+Each ordinary `*Pass::record` method contributes exactly one FrameGraph node and declares the
+resources that carry ordering, dataflow, or lifetime between graph nodes. Renderer-owned scene
+buffers, uniforms, bindless tables, and node-local scratch stay native renderer state and are bound
+directly by the encode callback. `HiZStage` is intentionally a stage rather than a pass: it owns the
+full depth-pyramid operation and contributes one node per mip while preserving the existing
 `Initial Hi-Z Pyramid` and `Final Hi-Z Pyramid` debug groups.
 
 `MeshRenderTargets` contains only caller-registered FrameGraph handles for color and depth. This

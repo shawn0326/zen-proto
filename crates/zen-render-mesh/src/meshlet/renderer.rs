@@ -114,7 +114,6 @@ pub struct MeshletRenderer {
     backend: MeshletBackend,
     scene: MeshletGpuScene,
     bindless: BindlessTextureArena,
-    bindless_texture_count: u32,
     passes: MeshletPassSet,
     hiz_stage: HiZStage,
     stats: MeshletStatsReadback,
@@ -224,7 +223,6 @@ impl MeshletRenderer {
             backend: requirements.backend(),
             scene,
             bindless,
-            bindless_texture_count: bindless_capacity.textures,
             passes,
             hiz_stage: HiZStage::new(device),
             stats: MeshletStatsReadback::new(device, total_instances, requirements.backend()),
@@ -494,10 +492,6 @@ impl MeshletRenderer {
 
     pub(crate) const fn bindless(&self) -> &BindlessTextureArena {
         &self.bindless
-    }
-
-    pub(crate) const fn bindless_texture_count(&self) -> u32 {
-        self.bindless_texture_count
     }
 
     pub(crate) fn readback_buffer(&self, index: usize) -> &wgpu::Buffer {
@@ -1247,7 +1241,7 @@ mod tests {
     }
 
     #[test]
-    fn indexed_frame_graph_topology_is_stable_and_registers_one_texture_set() {
+    fn indexed_frame_graph_topology_excludes_renderer_owned_resources() {
         let basic = empty_frame_topology(false);
         assert_eq!(
             basic
@@ -1292,37 +1286,47 @@ mod tests {
                 "meshlet.backend-raster.indexed",
             ]
         );
-        let texture_sets = occluded
-            .resources
-            .iter()
-            .filter(|resource| resource.kind == ResourceKind::TextureSet)
-            .collect::<Vec<_>>();
-        assert_eq!(texture_sets.len(), 1);
-        assert_eq!(texture_sets[0].label, "meshlet.bindless-textures");
-        let scan_blocks = occluded
-            .resources
-            .iter()
-            .find(|resource| resource.label == "meshlet.prefix-scan-blocks")
-            .expect("the hierarchical scan scratch buffer must be registered once");
-        let prefix_scan = occluded
-            .nodes
-            .iter()
-            .find(|node| node.label == "meshlet.prefix-scan")
-            .expect("the prefix-scan pass must survive graph compilation");
-        assert!(occluded.accesses.iter().any(|access| {
-            access.pass == prefix_scan.id
-                && access.resource == scan_blocks.id
-                && access.role == AccessRole::StorageBufferWrite
-        }));
-        assert_eq!(
+        assert!(
+            occluded
+                .resources
+                .iter()
+                .all(|resource| resource.kind != ResourceKind::TextureSet)
+        );
+        assert!(
             occluded
                 .accesses
                 .iter()
-                .filter(|access| access.role == AccessRole::BindlessTextureSet)
-                .count(),
-            2,
-            "the one resident texture-set is read by depth and final raster passes"
+                .all(|access| access.role != AccessRole::BindlessTextureSet)
         );
+        for renderer_owned in [
+            "meshlet.vertices",
+            "meshlet.meshes",
+            "meshlet.lods",
+            "meshlet.meshlets",
+            "meshlet.meshlet-vertices",
+            "meshlet.micro-indices",
+            "meshlet.fallback-indices",
+            "meshlet.instances",
+            "meshlet.materials",
+            "meshlet.prefix-scan-blocks",
+            "meshlet.lod-history",
+            "meshlet.frame-uniform",
+            "meshlet.coarse-frame-uniform",
+            "meshlet.raster-uniform",
+            "meshlet.bindless-textures",
+            "meshlet.dummy-hiz",
+            "meshlet.backend-work-counts",
+            "meshlet.mesh-dispatch",
+            "meshlet.task-dispatch",
+        ] {
+            assert!(
+                occluded
+                    .resources
+                    .iter()
+                    .all(|resource| resource.label != renderer_owned),
+                "renderer-owned resource {renderer_owned} must not be registered with the graph"
+            );
+        }
     }
 
     #[test]

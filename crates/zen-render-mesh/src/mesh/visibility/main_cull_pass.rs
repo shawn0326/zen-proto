@@ -27,10 +27,6 @@ pub struct MainCullPass {
 }
 
 impl MainCullPass {
-    pub(crate) fn uniform_buffer(&self) -> &wgpu::Buffer {
-        &self.uniform_buffer
-    }
-
     pub fn new(device: &wgpu::Device) -> Self {
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("main_cull.uniform.buffer"),
@@ -253,9 +249,6 @@ impl MainCullPass {
     ) -> Result<(), FrameGraphError> {
         let mut pass = frame.compute_pass("main-cull");
         pass.set_side_effect(false);
-        let _ = pass.storage_buffer_read(resources.instances, BufferRange::whole())?;
-        let _ = pass.storage_buffer_read(resources.mesh_table, BufferRange::whole())?;
-        let _ = pass.uniform_buffer(resources.main_cull_uniform, BufferRange::whole())?;
         for buffer in [
             resources.history,
             resources.list_a.visible_count,

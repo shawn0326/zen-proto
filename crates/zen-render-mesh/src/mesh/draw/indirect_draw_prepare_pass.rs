@@ -208,8 +208,6 @@ impl IndirectDrawPreparePass {
         pass.set_side_effect(false);
         for buffer in [
             handles.visible_instances,
-            resources.instances,
-            resources.mesh_table,
             handles.visible_count,
             resources.history,
         ] {
