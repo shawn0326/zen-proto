@@ -14,6 +14,17 @@ Pass a glTF/GLB path as the first argument to override the bundled Damaged Helme
 loading rejects alpha-mask and alpha-blend primitives; opaque glTF `doubleSided` primitives are
 placed in the two-sided PSO bin.
 
+The `indexed`, `mesh`, `task-mesh`, and `auto` paths support a stable per-meshlet ID color view.
+Press `M` to toggle it while the demo is running, or pass `--meshlet-debug` to start in that mode:
+
+```text
+cargo run -p zen-demo --bin meshlet-gltf -- --renderer auto --meshlet-debug
+```
+
+The debug colors are unlit and bypass material texture sampling so meshlet boundaries remain
+clear. `--meshlet-debug` is rejected with the legacy renderer and with `--benchmark-out`; runtime
+mode switching is also disabled during a benchmark so reports always measure shaded rendering.
+
 Build a deterministic cache explicitly with:
 
 ```text

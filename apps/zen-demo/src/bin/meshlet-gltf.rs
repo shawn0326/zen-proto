@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use winit::{dpi::PhysicalSize, window::Window};
+use winit::{dpi::PhysicalSize, event::ElementState, keyboard::KeyCode, window::Window};
 use zen_demo::{
     Example, FrameGraphSnapshotSource,
     device::{
@@ -35,7 +35,8 @@ use zen_demo::{
 use zen_render::{GpuTimingReport, RenderFrameInput};
 use zen_render_mesh::{
     Camera, MeshRenderInput, MeshRenderer, MeshletBuildConfig, MeshletGpuFrameTimings,
-    MeshletRenderInput, MeshletRenderer, PerspectiveProjection, TextureSamplingConfig,
+    MeshletRenderInput, MeshletRenderMode, MeshletRenderer, PerspectiveProjection,
+    TextureSamplingConfig,
 };
 
 static DEMO_ARGS: OnceLock<MeshletDemoArgs> = OnceLock::new();
@@ -104,6 +105,7 @@ impl DemoRenderHost {
         frame_index: u64,
         surface: &wgpu::Texture,
         camera: Camera,
+        render_mode: MeshletRenderMode,
     ) {
         let result = match self {
             Self::Legacy(host) => host.render_frame(
@@ -128,6 +130,7 @@ impl DemoRenderHost {
                     MeshletRenderInput {
                         frame_index,
                         camera,
+                        render_mode,
                         ..Default::default()
                     },
                 ),
@@ -276,6 +279,7 @@ struct Demo {
     frame_index: u64,
     benchmark_target: Option<wgpu::Texture>,
     benchmark: Option<ActiveBenchmark>,
+    render_mode: MeshletRenderMode,
     model_center: glam::Vec3,
     model_radius: f32,
 }
@@ -539,6 +543,14 @@ impl Example for Demo {
         });
 
         println!("Started renderer path: {}", arguments.renderer);
+        let render_mode = if arguments.meshlet_debug {
+            MeshletRenderMode::MeshletId
+        } else {
+            MeshletRenderMode::Shaded
+        };
+        if render_host.uses_meshlet_renderer() {
+            println!("Meshlet render mode: {render_mode:?} (press M to toggle)");
+        }
         Self {
             device,
             queue,
@@ -550,6 +562,7 @@ impl Example for Demo {
             frame_index: 0,
             benchmark_target,
             benchmark,
+            render_mode,
             model_center: center,
             model_radius: radius,
         }
@@ -587,6 +600,7 @@ impl Example for Demo {
             self.frame_index,
             &surface_texture.texture,
             self.camera,
+            self.render_mode,
         );
         self.queue.present(surface_texture);
         if let Some(timing) = self.render_host.take_gpu_timing() {
@@ -610,6 +624,24 @@ impl Example for Demo {
         }
         self.camera_controller.dolly(delta_y);
         self.camera.set_view(self.camera_controller.view_matrix());
+    }
+
+    fn key_input(&mut self, key_event: winit::event::KeyEvent) {
+        if key_event.physical_key != KeyCode::KeyM || key_event.state != ElementState::Pressed {
+            return;
+        }
+        if self.benchmark.is_some() {
+            return;
+        }
+        if !self.render_host.uses_meshlet_renderer() {
+            println!("Meshlet debug view is unavailable for the legacy renderer");
+            return;
+        }
+        self.render_mode = match self.render_mode {
+            MeshletRenderMode::Shaded => MeshletRenderMode::MeshletId,
+            MeshletRenderMode::MeshletId => MeshletRenderMode::Shaded,
+        };
+        println!("Meshlet render mode: {:?}", self.render_mode);
     }
 
     fn frame_graph_snapshot_source(&mut self) -> Option<&mut dyn FrameGraphSnapshotSource> {
@@ -651,6 +683,7 @@ impl Demo {
             self.frame_index,
             target,
             self.camera,
+            self.render_mode,
         );
         let cpu_frame_ns = duration_ns(cpu_frame_start.elapsed());
         let (cpu_encode, cpu_submit) = self
@@ -929,7 +962,7 @@ fn fatal(error: impl std::fmt::Display) -> ! {
 
 fn main() {
     let arguments = parse_meshlet_demo_args(std::env::args_os().skip(1))
-        .unwrap_or_else(|error| fatal(format_args!("{error}\nusage: meshlet-gltf [MODEL] [--renderer legacy|indexed|mesh|task-mesh|auto] [--cache PATH] [--benchmark-out REPORT.json] [--geometry-bound] [--auto-profile PROFILE.json]")));
+        .unwrap_or_else(|error| fatal(format_args!("{error}\nusage: meshlet-gltf [MODEL] [--renderer legacy|indexed|mesh|task-mesh|auto] [--cache PATH] [--meshlet-debug] [--benchmark-out REPORT.json] [--geometry-bound] [--auto-profile PROFILE.json]")));
     let benchmark = arguments.benchmark_out.is_some();
     if DEMO_ARGS.set(arguments).is_err() {
         fatal("demo arguments were initialized more than once");

@@ -31,7 +31,8 @@ pub use config::{
     MeshletConfigError, MeshletRendererConfig, ParseMeshletBackendError,
 };
 pub use renderer::{
-    MeshletRenderInput, MeshletRenderer, MeshletRendererError, PreparedMeshletFrame,
+    MeshletRenderInput, MeshletRenderMode, MeshletRenderer, MeshletRendererError,
+    PreparedMeshletFrame,
 };
 pub use stats::{
     MeshletCapacityKind, MeshletGpuFrameTimings, MeshletGpuPassTimings, MeshletGpuTimingError,
@@ -93,6 +94,30 @@ mod shader_tests {
             ("mesh", include_str!("../../shaders/meshlet/mesh.wgsl")),
         ] {
             validate_and_emit_spirv(label, source);
+        }
+    }
+
+    #[test]
+    fn raster_shaders_forward_flat_meshlet_debug_state() {
+        for (label, source) in [
+            (
+                "indexed",
+                include_str!("../../shaders/meshlet/indexed.wgsl"),
+            ),
+            ("mesh", include_str!("../../shaders/meshlet/mesh.wgsl")),
+        ] {
+            assert!(
+                source.contains("@interpolate(flat) meshlet_id: u32"),
+                "{label} does not flat-interpolate the meshlet ID"
+            );
+            assert!(
+                source.contains("@interpolate(flat) render_mode: u32"),
+                "{label} does not flat-interpolate the render mode"
+            );
+            assert!(
+                source.contains("meshlet_debug_color(input.meshlet_id)"),
+                "{label} does not shade from the global meshlet ID"
+            );
         }
     }
 

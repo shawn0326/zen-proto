@@ -12,9 +12,9 @@ use zen_frame_graph::{
 use zen_render_mesh::{
     Camera, Instance, Material, MaterialTextureBinding, Mesh, MeshRenderInput, MeshRenderTargets,
     MeshRenderer, MeshletBackend, MeshletBindlessConfig, MeshletCapabilities,
-    MeshletCapacityConfig, MeshletRenderInput, MeshletRenderer, MeshletRendererConfig,
-    MeshletSceneAsset, RawStaticMesh, Texture, TextureAddressMode, TextureMagFilter,
-    TextureMinFilter, TextureSampler, TextureSamplingConfig, Vertex,
+    MeshletCapacityConfig, MeshletRenderInput, MeshletRenderMode, MeshletRenderer,
+    MeshletRendererConfig, MeshletSceneAsset, RawStaticMesh, Texture, TextureAddressMode,
+    TextureMagFilter, TextureMinFilter, TextureSampler, TextureSamplingConfig, Vertex,
 };
 
 const EXTENT: wgpu::Extent3d = wgpu::Extent3d {
@@ -77,16 +77,36 @@ async fn run() {
     for instance_count in [2, 33] {
         for sampling_case in SAMPLING_CASES {
             let reference = render_legacy(&adapter, instance_count, sampling_case).await;
+            let mut debug_reference: Option<Vec<FrameCapture>> = None;
             for backend in [
                 MeshletBackend::IndexedIndirect,
                 MeshletBackend::MeshOnly,
                 MeshletBackend::TaskMesh,
             ] {
-                let captures =
-                    render_instances(&adapter, backend, instance_count, sampling_case).await;
+                let captures = render_instances(
+                    &adapter,
+                    backend,
+                    instance_count,
+                    sampling_case,
+                    MeshletRenderMode::Shaded,
+                )
+                .await;
                 compare_captures(&reference, &captures, backend, instance_count);
+                let debug_captures = render_instances(
+                    &adapter,
+                    backend,
+                    instance_count,
+                    sampling_case,
+                    MeshletRenderMode::MeshletId,
+                )
+                .await;
+                if let Some(reference) = debug_reference.as_ref() {
+                    compare_captures(reference, &debug_captures, backend, instance_count);
+                } else {
+                    debug_reference = Some(debug_captures);
+                }
                 eprintln!(
-                    "Vulkan meshlet smoke passed: {backend}, sampling={}, instances={instance_count}",
+                    "Vulkan meshlet smoke passed: {backend}, shaded+meshlet-id, sampling={}, instances={instance_count}",
                     sampling_case.name
                 );
             }
@@ -241,6 +261,7 @@ async fn render_instances(
     backend: MeshletBackend,
     instance_count: u32,
     sampling_case: SamplingCase,
+    render_mode: MeshletRenderMode,
 ) -> Vec<FrameCapture> {
     let config = MeshletRendererConfig {
         backend,
@@ -325,6 +346,7 @@ async fn render_instances(
             MeshletRenderInput {
                 camera,
                 enable_occlusion_culling,
+                render_mode,
                 ..Default::default()
             },
             EXTENT,
@@ -364,7 +386,11 @@ async fn render_instances(
             camera,
             instance_count,
             backend,
-            sampling_case.expected_channel,
+            if render_mode == MeshletRenderMode::MeshletId {
+                0
+            } else {
+                sampling_case.expected_channel
+            },
         );
         captures.push(FrameCapture {
             color: pixels,

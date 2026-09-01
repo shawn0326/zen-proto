@@ -100,6 +100,8 @@ pub struct MeshletDemoArgs {
     pub auto_profile: Option<PathBuf>,
     /// Explicit acknowledgement that the selected benchmark scene is geometry-bound.
     pub geometry_bound: bool,
+    /// Starts meshlet backends in the stable per-meshlet ID color view.
+    pub meshlet_debug: bool,
 }
 
 impl Default for MeshletDemoArgs {
@@ -111,6 +113,7 @@ impl Default for MeshletDemoArgs {
             benchmark_out: None,
             auto_profile: None,
             geometry_bound: false,
+            meshlet_debug: false,
         }
     }
 }
@@ -127,6 +130,10 @@ pub enum ParseMeshletDemoArgsError {
     BenchmarkAuto,
     #[error("--auto-profile is only valid with --renderer auto")]
     ProfileWithoutAuto,
+    #[error("--meshlet-debug is unavailable with --renderer legacy")]
+    MeshletDebugLegacy,
+    #[error("--meshlet-debug cannot be combined with --benchmark-out")]
+    MeshletDebugBenchmark,
 }
 
 /// Parses `--renderer legacy|indexed|mesh|task-mesh|auto`, an optional model path, and an optional
@@ -164,6 +171,8 @@ pub fn parse_meshlet_demo_args(
                 )?));
         } else if argument == "--geometry-bound" {
             result.geometry_bound = true;
+        } else if argument == "--meshlet-debug" {
+            result.meshlet_debug = true;
         } else if argument.to_string_lossy().starts_with('-') || result.model.is_some() {
             return Err(ParseMeshletDemoArgsError::Unexpected(argument));
         } else {
@@ -175,6 +184,12 @@ pub fn parse_meshlet_demo_args(
     }
     if result.auto_profile.is_some() && result.renderer != DemoRenderer::Auto {
         return Err(ParseMeshletDemoArgsError::ProfileWithoutAuto);
+    }
+    if result.meshlet_debug && result.renderer == DemoRenderer::Legacy {
+        return Err(ParseMeshletDemoArgsError::MeshletDebugLegacy);
+    }
+    if result.meshlet_debug && result.benchmark_out.is_some() {
+        return Err(ParseMeshletDemoArgsError::MeshletDebugBenchmark);
     }
     Ok(result)
 }
@@ -469,6 +484,38 @@ mod tests {
                 OsString::from("bad.json"),
             ]),
             Err(ParseMeshletDemoArgsError::ProfileWithoutAuto)
+        );
+    }
+
+    #[test]
+    fn meshlet_debug_is_explicit_and_excluded_from_legacy_and_benchmarks() {
+        assert!(!MeshletDemoArgs::default().meshlet_debug);
+
+        let debug = parse_meshlet_demo_args([
+            OsString::from("--renderer"),
+            OsString::from("task-mesh"),
+            OsString::from("--meshlet-debug"),
+        ])
+        .unwrap();
+        assert!(debug.meshlet_debug);
+
+        assert_eq!(
+            parse_meshlet_demo_args([
+                OsString::from("--renderer"),
+                OsString::from("legacy"),
+                OsString::from("--meshlet-debug"),
+            ]),
+            Err(ParseMeshletDemoArgsError::MeshletDebugLegacy)
+        );
+        assert_eq!(
+            parse_meshlet_demo_args([
+                OsString::from("--renderer"),
+                OsString::from("indexed"),
+                OsString::from("--meshlet-debug"),
+                OsString::from("--benchmark-out"),
+                OsString::from("debug.json"),
+            ]),
+            Err(ParseMeshletDemoArgsError::MeshletDebugBenchmark)
         );
     }
 

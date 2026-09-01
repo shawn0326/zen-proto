@@ -40,6 +40,17 @@ const DEFAULT_LOD_THRESHOLD_PIXELS: f32 = 1.0;
 const DEFAULT_LOD_HYSTERESIS: f32 = 0.1;
 static NEXT_RENDERER_ID: AtomicU64 = AtomicU64::new(1);
 
+/// Selects how visible meshlets are shaded by every meshlet raster backend.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum MeshletRenderMode {
+    /// Samples the material textures and applies the normal forward lighting path.
+    #[default]
+    Shaded = 0,
+    /// Draws each global meshlet ID with a stable, unlit debug color.
+    MeshletId = 1,
+}
+
 /// Per-frame controls shared by all three concrete Vulkan meshlet backends.
 #[derive(Clone, Copy, Debug)]
 pub struct MeshletRenderInput {
@@ -52,6 +63,8 @@ pub struct MeshletRenderInput {
     pub lod_error_threshold_pixels: f32,
     /// One-level LOD hysteresis ratio, clamped by the shader to `0..0.49`.
     pub lod_hysteresis: f32,
+    /// Shading mode used by the indexed, mesh-only, and task-mesh raster backends.
+    pub render_mode: MeshletRenderMode,
 }
 
 impl Default for MeshletRenderInput {
@@ -62,6 +75,7 @@ impl Default for MeshletRenderInput {
             enable_occlusion_culling: true,
             lod_error_threshold_pixels: DEFAULT_LOD_THRESHOLD_PIXELS,
             lod_hysteresis: DEFAULT_LOD_HYSTERESIS,
+            render_mode: MeshletRenderMode::Shaded,
         }
     }
 }
@@ -320,7 +334,7 @@ impl MeshletRenderer {
         let mut coarse_frame = frame;
         coarse_frame.parameters[3] = 0.0;
         coarse_frame.limits[1] = 0;
-        let raster = self.raster_uniforms(input.camera);
+        let raster = self.raster_uniforms(input.camera, input.render_mode);
         self.scene
             .update_uniforms(&self.queue, &frame, &coarse_frame, &raster);
 
@@ -453,13 +467,17 @@ impl MeshletRenderer {
         }
     }
 
-    fn raster_uniforms(&self, camera: Camera) -> [RasterUniform; 2] {
+    fn raster_uniforms(
+        &self,
+        camera: Camera,
+        render_mode: MeshletRenderMode,
+    ) -> [RasterUniform; 2] {
         let view_projection = camera.view_projection().to_cols_array_2d();
         std::array::from_fn(|bin| RasterUniform {
             view_projection,
             visible_base: bin as u32 * self.scene.capacities.max_indirect_draws_per_bin,
             task_packet_base: bin as u32 * self.scene.capacities.max_task_packets,
-            _reserved: 0,
+            render_mode: render_mode as u32,
             pso_bin: bin as u32,
         })
     }

@@ -57,7 +57,7 @@ struct RasterUniform {
     view_projection: mat4x4<f32>,
     visible_base: u32,
     task_packet_base: u32,
-    _reserved: u32,
+    render_mode: u32,
     pso_bin: u32,
 };
 
@@ -104,6 +104,8 @@ struct VertexOutput {
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
     @location(3) @interpolate(flat) material_id: u32,
+    @location(4) @interpolate(flat) meshlet_id: u32,
+    @location(5) @interpolate(flat) render_mode: u32,
 };
 
 struct PrimitiveOutput {
@@ -172,6 +174,26 @@ fn transform_normal(model: mat4x4<f32>, local: vec3<f32>) -> vec3<f32> {
     return normalize_or(mat3x3<f32>(cofactor_x, cofactor_y, cofactor_z) * local * orientation, local);
 }
 
+fn hash_u32(value: u32) -> u32 {
+    var hash = value;
+    hash = hash ^ (hash >> 16u);
+    hash = hash * 0x7feb352du;
+    hash = hash ^ (hash >> 15u);
+    hash = hash * 0x846ca68bu;
+    return hash ^ (hash >> 16u);
+}
+
+fn meshlet_debug_color(meshlet_id: u32) -> vec3<f32> {
+    let hue = f32(hash_u32(meshlet_id) & 0xffffu) / 65536.0;
+    let rgb = clamp(
+        abs(fract(hue + vec3<f32>(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - vec3<f32>(3.0))
+            - vec3<f32>(1.0),
+        vec3<f32>(0.0),
+        vec3<f32>(1.0),
+    );
+    return vec3<f32>(0.2) + rgb * 0.8;
+}
+
 fn emit_meshlet(work: Work, lane: u32) {
     let meshlet = meshlets[work.meshlet_id];
     let instance = instances[work.instance_id];
@@ -187,6 +209,8 @@ fn emit_meshlet(work: Work, lane: u32) {
         mesh_output.vertices[lane].normal = transform_normal(instance.model, decode_normal(vertex.normal_oct));
         mesh_output.vertices[lane].uv = vertex.uv;
         mesh_output.vertices[lane].material_id = work.material_id;
+        mesh_output.vertices[lane].meshlet_id = work.meshlet_id;
+        mesh_output.vertices[lane].render_mode = raster.render_mode;
     }
     if (lane < meshlet.triangle_count) {
         let first = meshlet.triangle_offset + lane * 3u;
@@ -435,6 +459,9 @@ fn ms_task_main(
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    if (input.render_mode == 1u) {
+        return vec4<f32>(meshlet_debug_color(input.meshlet_id), 1.0);
+    }
     let material = materials[input.material_id];
     let base = textureSample(textures[material.albedo.x], samplers[material.albedo.y], input.uv)
         * material.albedo_factor * input.color;

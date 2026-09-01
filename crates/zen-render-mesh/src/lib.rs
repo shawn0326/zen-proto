@@ -23,7 +23,7 @@ pub use meshlet::{
     MeshletConfigError, MeshletDeviceRequirements, MeshletDriverBlacklist,
     MeshletDriverBlacklistEntry, MeshletDriverKey, MeshletGpuFrameTimings, MeshletGpuPassTimings,
     MeshletGpuTimingError, MeshletLimitFailure, MeshletOverflowFlags, MeshletPsoBinStats,
-    MeshletPsoClass, MeshletRenderInput, MeshletRenderStats, MeshletRenderer,
+    MeshletPsoClass, MeshletRenderInput, MeshletRenderMode, MeshletRenderStats, MeshletRenderer,
     MeshletRendererConfig, MeshletRendererError, MeshletSceneAsset, MeshletTableEntry, NormalCone,
     PackedVertexAttributes, ParseMeshletBackendError, PreparedMeshletFrame, RawStaticMesh,
     TextureHandle,

@@ -173,7 +173,7 @@ pub(crate) struct RasterUniform {
     pub view_projection: [[f32; 4]; 4],
     pub visible_base: u32,
     pub task_packet_base: u32,
-    pub _reserved: u32,
+    pub render_mode: u32,
     pub pso_bin: u32,
 }
 
@@ -224,6 +224,17 @@ mod tests {
         assert_eq!(std::mem::offset_of!(BackendWorkCounts, task), 8);
         assert_eq!(std::mem::size_of::<BackendWorkCounts>(), 16);
         assert_eq!(std::mem::align_of::<BackendWorkCounts>(), 16);
+    }
+
+    #[test]
+    fn raster_uniform_keeps_its_dynamic_offset_abi() {
+        assert_eq!(std::mem::offset_of!(RasterUniform, view_projection), 0);
+        assert_eq!(std::mem::offset_of!(RasterUniform, visible_base), 64);
+        assert_eq!(std::mem::offset_of!(RasterUniform, task_packet_base), 68);
+        assert_eq!(std::mem::offset_of!(RasterUniform, render_mode), 72);
+        assert_eq!(std::mem::offset_of!(RasterUniform, pso_bin), 76);
+        assert_eq!(std::mem::size_of::<RasterUniform>(), 80);
+        assert_eq!(RASTER_UNIFORM_STRIDE, 256);
     }
 
     #[test]

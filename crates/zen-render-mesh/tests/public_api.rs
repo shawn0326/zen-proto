@@ -1,9 +1,9 @@
 use zen_render_mesh::{
     Camera, Instance, Material, Mesh, MeshRenderInput, MeshRenderStats, MeshRenderTargets,
     MeshRenderer, MeshletBackend, MeshletBuildConfig, MeshletCapabilities,
-    MeshletDeviceRequirements, MeshletRenderInput, MeshletRenderStats, MeshletRenderer,
-    MeshletRendererConfig, MeshletSceneAsset, PerspectiveProjection, PreparedMeshFrame,
-    PreparedMeshletFrame, Texture, Vertex,
+    MeshletDeviceRequirements, MeshletRenderInput, MeshletRenderMode, MeshletRenderStats,
+    MeshletRenderer, MeshletRendererConfig, MeshletSceneAsset, PerspectiveProjection,
+    PreparedMeshFrame, PreparedMeshletFrame, Texture, Vertex,
 };
 
 #[test]
@@ -63,6 +63,11 @@ fn meshlet_domain_public_api_paths_compile() {
         MeshletBackend::MeshOnly,
         MeshletBackend::TaskMesh,
     ];
+    assert_eq!(
+        MeshletRenderInput::default().render_mode,
+        MeshletRenderMode::Shaded
+    );
+    let _ = [MeshletRenderMode::Shaded, MeshletRenderMode::MeshletId];
     let _ = MeshletRenderer::new;
     let _ = MeshletRenderer::prepare_frame;
     let _ = MeshletRenderer::record_frame_graph;
