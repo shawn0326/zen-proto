@@ -418,10 +418,7 @@ async fn run_builtin_probe() {
     );
     drop(readback);
 
-    let mut records = words[1..]
-        .chunks_exact(RECORD_WORDS)
-        .map(|record| <[u32; RECORD_WORDS]>::try_from(record).unwrap())
-        .collect::<Vec<_>>();
+    let mut records = words[1..].as_chunks::<RECORD_WORDS>().0.to_vec();
     records.sort_unstable();
     let mut expected = Vec::with_capacity(GROUP_COUNT);
     for y in 0..GROUPS_Y {
@@ -478,9 +475,11 @@ async fn run_task_payload_probe() {
 
     assert_eq!(words[0], CHILDREN as u32, "dynamic task child count");
     let mut actual = words[1..]
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .take(CHILDREN)
-        .map(|record| <[u32; 4]>::try_from(record).unwrap())
+        .copied()
         .collect::<Vec<_>>();
     actual.sort_unstable();
     let mut expected = Vec::with_capacity(CHILDREN);
@@ -646,8 +645,10 @@ fn run_mesh_probe(
     receiver.recv().unwrap().unwrap();
     let mapped = readback.slice(..).get_mapped_range().unwrap();
     let words = mapped
-        .chunks_exact(4)
-        .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|bytes| u32::from_le_bytes(*bytes))
         .collect();
     drop(mapped);
     readback.unmap();

@@ -11,6 +11,10 @@ pub(crate) struct MeshGpuScene {
 }
 
 impl MeshGpuScene {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "constructor keeps the legacy scene resource inputs explicit"
+    )]
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,

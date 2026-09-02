@@ -381,6 +381,11 @@ impl BindlessTextureArena {
             .ok_or(BindlessSamplerError::Full {
                 capacity: self.max_samplers,
             })?;
+        let sampler = descriptor
+            .create_wgpu_sampler(device, self.sampling, "meshlet.bindless.dynamic-sampler")
+            .map_err(|error| BindlessSamplerError::Resource {
+                message: error.to_string(),
+            })?;
         let removed = self
             .free_sampler_slots
             .pop()
@@ -388,13 +393,7 @@ impl BindlessTextureArena {
         debug_assert_eq!(removed, slot_index);
         let slot = &mut self.sampler_slots[slot_index as usize];
         debug_assert!(slot.sampler.is_none());
-        slot.sampler = Some(
-            descriptor
-                .create_wgpu_sampler(device, self.sampling, "meshlet.bindless.dynamic-sampler")
-                .map_err(|error| BindlessSamplerError::Resource {
-                    message: error.to_string(),
-                })?,
-        );
+        slot.sampler = Some(sampler);
         self.dirty = true;
         Ok(SamplerHandle {
             slot: slot_index,
@@ -710,6 +709,42 @@ mod tests {
         assert_eq!(
             arena.remove_sampler(old),
             Err(BindlessSamplerError::InvalidHandle { handle: old })
+        );
+    }
+
+    #[test]
+    fn failed_sampler_insert_does_not_consume_a_free_slot() {
+        let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor {
+            required_features: wgpu::Features::TEXTURE_BINDING_ARRAY
+                | wgpu::Features::PARTIALLY_BOUND_BINDING_ARRAY,
+            required_limits: wgpu::Limits {
+                max_binding_array_elements_per_shader_stage: 6,
+                max_binding_array_sampler_elements_per_shader_stage: 2,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let mut arena = BindlessTextureArena::new(
+            &device,
+            &queue,
+            4,
+            2,
+            &[],
+            &[],
+            TextureSamplingConfig::default(),
+        )
+        .unwrap();
+        arena.sampling.max_anisotropy = 17;
+        assert!(matches!(
+            arena.insert_sampler(&device, TextureSampler::default()),
+            Err(BindlessSamplerError::Resource { .. })
+        ));
+
+        arena.sampling.max_anisotropy = 1;
+        assert!(
+            arena
+                .insert_sampler(&device, TextureSampler::default())
+                .is_ok()
         );
     }
 }

@@ -46,8 +46,8 @@ cargo test -p zen-render-mesh --test vulkan_meshlet_smoke -- --ignored --nocaptu
 
 If IndexedIndirect works but either experimental backend fails, keep using `--renderer indexed`,
 capture the adapter name/driver info printed by the probe, and do not generate an Auto profile for
-that driver. Validation-layer complaints involving task/mesh resource visibility should also be
-checked against the local `wgpu-hal 30.0.1` barrier patch described by the authoritative README.
+that driver. Keep Vulkan validation layers enabled when investigating task/mesh resource visibility
+complaints.
 
 ## Fixed benchmark
 

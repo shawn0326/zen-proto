@@ -71,6 +71,10 @@ impl MeshRenderer {
         }
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "constructor keeps the legacy renderer resource inputs explicit"
+    )]
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,

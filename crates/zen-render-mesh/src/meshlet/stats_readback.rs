@@ -424,7 +424,6 @@ mod tests {
             lod_histogram: [1, 2, 1, 0, 0, 0, 0, 0],
             lod_overflow_instances: 11,
             conservatively_visible_meshlets: 13,
-            ..Default::default()
         };
 
         let stats = MeshletStatsReadback::decode(44, 12, MeshletBackend::TaskMesh, counters);
