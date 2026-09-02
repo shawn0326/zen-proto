@@ -1,13 +1,11 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/zen-frame-graph",
     "crates/zen-render",
     "crates/zen-render-mesh",
     "apps/zen-demo",
 ]
 default-members = [
-    "crates/zen-frame-graph",
     "crates/zen-render",
     "crates/zen-render-mesh",
 ]
@@ -15,6 +13,7 @@ default-members = [
 edition = "2024"
 
 [workspace.dependencies]
+zenfg = "=0.1.0-beta.2"
 wgpu = "30.0.1"
 glam = { version = "0.30", features = ["bytemuck"] }
 bytemuck = { version = "1.24", features = ["derive"] }

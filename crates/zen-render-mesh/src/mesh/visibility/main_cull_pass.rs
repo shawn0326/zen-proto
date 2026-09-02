@@ -7,7 +7,7 @@ use crate::{
     },
 };
 use std::cell::RefCell;
-use zen_frame_graph::{BufferRange, Frame, FrameGraphError, WriteContents};
+use zenfg::{BufferRange, Frame, FrameGraphError, WriteContents};
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]

@@ -8,7 +8,7 @@ use super::{
     renderer::{MeshletRenderer, PreparedMeshletFrame},
 };
 use crate::{MeshRenderTargets, mesh::visibility::HiZPyramidDesc};
-use zen_frame_graph::{
+use zenfg::{
     BufferRange, ClearBufferOp, ColorAttachmentOps, DepthAttachmentOps, Frame, FrameGraphError,
     WriteContents,
 };
@@ -473,7 +473,7 @@ impl<'frame> MeshletGraphRecorder<'frame> {
         self,
         frame: &mut Frame<'frame>,
         resources: &MeshletGraphResources<'frame>,
-    ) -> Result<zen_frame_graph::Buffer<'frame>, FrameGraphError> {
+    ) -> Result<zenfg::Buffer<'frame>, FrameGraphError> {
         let destination = resources
             .readback
             .ok_or_else(|| FrameGraphError::Internal {

@@ -8,10 +8,10 @@ readme = "README.md"
 
 [features]
 default = []
-snapshot = ["zen-frame-graph/snapshot"]
+snapshot = ["zenfg/snapshot"]
 
 [dependencies]
-zen-frame-graph = { path = "../zen-frame-graph" }
+zenfg.workspace = true
 wgpu.workspace = true
 
 [dev-dependencies]

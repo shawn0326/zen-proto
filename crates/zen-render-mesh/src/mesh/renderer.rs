@@ -9,7 +9,7 @@ use crate::mesh::{
     stats::{MeshRenderStats, MeshStatsReadback},
     visibility::{HiZStage, MeshVisibilityState},
 };
-use zen_frame_graph::{Frame, FrameGraphError};
+use zenfg::{Frame, FrameGraphError};
 
 #[derive(Clone, Copy, Debug)]
 pub struct MeshRenderInput {

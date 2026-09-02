@@ -6,7 +6,7 @@ use crate::{
         visibility::{VisibilityHistory, VisibilityList},
     },
 };
-use zen_frame_graph::{BufferRange, Frame, FrameGraphError, WriteContents};
+use zenfg::{BufferRange, Frame, FrameGraphError, WriteContents};
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -278,7 +278,7 @@ mod tests {
     use super::*;
     use crate::mesh::visibility::HiZPyramidDesc;
     use std::cell::Cell;
-    use zen_frame_graph::{CompileOptions, FrameGraph, WriteContents};
+    use zenfg::{CompileOptions, FrameGraph, WriteContents};
 
     fn storage_buffer(device: &wgpu::Device, label: &str) -> wgpu::Buffer {
         device.create_buffer(&wgpu::BufferDescriptor {

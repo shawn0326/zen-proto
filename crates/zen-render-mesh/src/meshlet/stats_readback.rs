@@ -185,7 +185,7 @@ impl MeshletStatsReadback {
     /// Associates an independently completed timestamp report by explicit frame identity.
     pub(crate) fn associate_gpu_timing(
         &mut self,
-        report: &zen_frame_graph::GpuTimingReport,
+        report: &zenfg::GpuTimingReport,
     ) -> Result<(), MeshletGpuTimingError> {
         let timing = match MeshletGpuFrameTimings::from_gpu_timing_report(report) {
             Ok(timing) => timing,
@@ -511,9 +511,9 @@ mod tests {
         readback.commit_submitted(0, 8);
 
         let error = readback
-            .associate_gpu_timing(&zen_frame_graph::GpuTimingReport::Unavailable {
+            .associate_gpu_timing(&zenfg::GpuTimingReport::Unavailable {
                 frame_index: 8,
-                reason: zen_frame_graph::GpuTimingUnavailableReason::Unsupported,
+                reason: zenfg::GpuTimingUnavailableReason::Unsupported,
             })
             .unwrap_err();
         assert!(matches!(

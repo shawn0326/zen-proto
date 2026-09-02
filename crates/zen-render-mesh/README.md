@@ -2,7 +2,7 @@
 
 `zen-render-mesh` is the GPU-driven Mesh domain renderer for `zen-proto`. It owns Mesh scene GPU
 data, visibility state, native pass pipelines, and stats readback. It contributes work to a
-caller-owned `zen-frame-graph` frame; it does not acquire a surface, allocate shared frame targets,
+caller-owned `zenfg` frame; it does not acquire a surface, allocate shared frame targets,
 compile or execute the graph, or present.
 
 ## Concepts

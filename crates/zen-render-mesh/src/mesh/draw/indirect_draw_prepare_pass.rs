@@ -5,7 +5,7 @@ use crate::mesh::{
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
-use zen_frame_graph::{BufferRange, Frame, FrameGraphError, WriteContents};
+use zenfg::{BufferRange, Frame, FrameGraphError, WriteContents};
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]

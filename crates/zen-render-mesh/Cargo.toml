@@ -3,11 +3,11 @@ name = "zen-render-mesh"
 version = "0.1.0"
 edition.workspace = true
 publish = false
-description = "GPU-driven Mesh domain renderer for zen-frame-graph"
+description = "GPU-driven Mesh domain renderer for ZenFG"
 readme = "README.md"
 
 [dependencies]
-zen-frame-graph = { path = "../zen-frame-graph" }
+zenfg.workspace = true
 wgpu.workspace = true
 glam.workspace = true
 bytemuck.workspace = true

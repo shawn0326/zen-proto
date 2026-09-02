@@ -5,16 +5,16 @@
 
 use std::sync::mpsc;
 
-use zen_frame_graph::{
-    CompileOptions, FrameGraph, ImportTextureOptions, InitialContents, RootReason, TextureDesc,
-    UsagePolicy,
-};
 use zen_render_mesh::{
     Camera, Instance, Material, MaterialTextureBinding, Mesh, MeshRenderInput, MeshRenderTargets,
     MeshRenderer, MeshletBackend, MeshletBindlessConfig, MeshletCapabilities,
     MeshletCapacityConfig, MeshletRenderInput, MeshletRenderMode, MeshletRenderer,
     MeshletRendererConfig, MeshletSceneAsset, RawStaticMesh, Texture, TextureAddressMode,
     TextureMagFilter, TextureMinFilter, TextureSampler, TextureSamplingConfig, Vertex,
+};
+use zenfg::{
+    CompileOptions, FrameGraph, ImportTextureOptions, InitialContents, RootReason, TextureDesc,
+    UsagePolicy,
 };
 
 const EXTENT: wgpu::Extent3d = wgpu::Extent3d {
@@ -616,10 +616,10 @@ fn create_texture(
 }
 
 fn import_texture<'frame>(
-    frame: &mut zen_frame_graph::Frame<'frame>,
+    frame: &mut zenfg::Frame<'frame>,
     native: &wgpu::Texture,
     initial_contents: InitialContents,
-) -> zen_frame_graph::Texture<'frame> {
+) -> zenfg::Texture<'frame> {
     let logical = frame
         .import_texture(
             TextureDesc {

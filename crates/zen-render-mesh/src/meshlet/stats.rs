@@ -1,6 +1,6 @@
 use std::ops::{BitOr, BitOrAssign};
 
-use zen_frame_graph::{GpuTimingReport, GpuTimingUnavailableReason};
+use zenfg::{GpuTimingReport, GpuTimingUnavailableReason};
 
 use super::gpu_types::{
     OVERFLOW_CANDIDATES, OVERFLOW_DISPATCH, OVERFLOW_VISIBLE_BACKFACE, OVERFLOW_VISIBLE_TWO_SIDED,

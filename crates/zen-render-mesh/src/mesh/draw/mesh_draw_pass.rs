@@ -4,9 +4,7 @@ use crate::mesh::{
     scene::{Instance, Material, MeshGpuScene, VertexPacked},
     visibility::VisibilityList,
 };
-use zen_frame_graph::{
-    BufferRange, ColorAttachmentOps, DepthAttachmentOps, Frame, FrameGraphError,
-};
+use zenfg::{BufferRange, ColorAttachmentOps, DepthAttachmentOps, Frame, FrameGraphError};
 
 const UNIFORM_SIZE_BYTES: u32 = 256;
 const MAX_UNIFORM_COUNT: u32 = 2;

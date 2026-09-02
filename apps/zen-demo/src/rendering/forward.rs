@@ -1,6 +1,6 @@
-use zen_frame_graph::{FrameGraphError, TextureDesc};
 use zen_render::{FrameComposeContext, FrameComposer, RenderHost};
 use zen_render_mesh::{MeshRenderInput, MeshRenderTargets, MeshRenderer, PreparedMeshFrame};
+use zenfg::{FrameGraphError, TextureDesc};
 
 /// Concrete forward-frame recipe shared by the interactive demos.
 ///
@@ -83,12 +83,12 @@ impl FrameComposer for ForwardFrameComposer {
 #[cfg(test)]
 mod tests {
     use super::{ForwardFrameComposer, depth_target_desc};
-    use zen_frame_graph::{
+    use zen_render::{RenderFrameInput, RenderHost};
+    use zen_render_mesh::{Camera, MeshRenderInput, MeshRenderer};
+    use zenfg::{
         UsagePolicy,
         snapshot::{SnapshotResourceOrigin, SnapshotRootReason},
     };
-    use zen_render::{RenderFrameInput, RenderHost};
-    use zen_render_mesh::{Camera, MeshRenderInput, MeshRenderer};
 
     #[test]
     fn depth_target_preserves_the_forward_recipe_contract() {

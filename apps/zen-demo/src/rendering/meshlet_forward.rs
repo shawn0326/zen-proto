@@ -1,8 +1,8 @@
-use zen_frame_graph::{FrameGraphError, TextureDesc};
 use zen_render::{FrameComposeContext, FrameComposer, RenderHost};
 use zen_render_mesh::{
     MeshRenderTargets, MeshletRenderInput, MeshletRenderer, PreparedMeshletFrame,
 };
+use zenfg::{FrameGraphError, TextureDesc};
 
 /// Forward-frame recipe for the independent Vulkan meshlet renderer.
 pub struct MeshletForwardFrameComposer {
@@ -77,11 +77,11 @@ impl FrameComposer for MeshletForwardFrameComposer {
 
 #[cfg(test)]
 mod tests {
-    use zen_frame_graph::UsagePolicy;
+    use zenfg::UsagePolicy;
 
     #[test]
     fn depth_target_contract_matches_forward_shading() {
-        let descriptor = zen_frame_graph::TextureDesc::new_2d(
+        let descriptor = zenfg::TextureDesc::new_2d(
             "meshlet-depth-transient",
             1920,
             1080,

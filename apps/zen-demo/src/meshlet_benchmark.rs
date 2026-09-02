@@ -449,11 +449,10 @@ impl MeshletBenchmarkReport {
             return Ok(());
         }
 
+        // ZenFG 0.1.0-beta.2 timestamps structured render and compute passes only. Clear and copy
+        // metrics remain optional in schema v6 so a future ZenFG release can restore them without
+        // another report-shape migration.
         for (pass, timing) in [
-            (
-                "gpu_passes_ns.clear_frame_counters",
-                passes.clear_frame_counters,
-            ),
             (
                 "gpu_passes_ns.instance_classify_lod_count",
                 passes.instance_classify_lod_count,
@@ -463,14 +462,9 @@ impl MeshletBenchmarkReport {
             ("gpu_passes_ns.coarse_cull", passes.coarse_cull),
             ("gpu_passes_ns.occluder_depth", passes.occluder_depth),
             ("gpu_passes_ns.hiz_build", passes.hiz_build),
-            (
-                "gpu_passes_ns.clear_coarse_results",
-                passes.clear_coarse_results,
-            ),
             ("gpu_passes_ns.final_cull", passes.final_cull),
             ("gpu_passes_ns.indirect_prepare", passes.indirect_prepare),
             ("gpu_passes_ns.backend_raster", passes.backend_raster),
-            ("gpu_passes_ns.stats_copy", passes.stats_copy),
         ] {
             if timing.is_none() {
                 return Err(MeshletBenchmarkError::MissingGpuPassTiming {
@@ -1264,12 +1258,12 @@ mod tests {
         );
 
         let mut invalid = report(MeshletBenchmarkRenderer::Indexed, 1_000);
-        invalid.gpu_passes_ns.stats_copy = None;
+        invalid.gpu_passes_ns.prefix_scan = None;
         assert_eq!(
             invalid.validate_contract(),
             Err(MeshletBenchmarkError::MissingGpuPassTiming {
                 renderer: MeshletBenchmarkRenderer::Indexed,
-                pass: "gpu_passes_ns.stats_copy",
+                pass: "gpu_passes_ns.prefix_scan",
             })
         );
 
@@ -1282,6 +1276,16 @@ mod tests {
                 pass: "gpu_passes_ns.final_cull",
             })
         );
+    }
+
+    #[test]
+    fn beta_two_reports_allow_unavailable_clear_and_copy_timings() {
+        let mut report = report(MeshletBenchmarkRenderer::Indexed, 1_000);
+        report.gpu_passes_ns.clear_frame_counters = None;
+        report.gpu_passes_ns.clear_coarse_results = None;
+        report.gpu_passes_ns.stats_copy = None;
+
+        assert!(report.validate_contract().is_ok());
     }
 
     #[test]

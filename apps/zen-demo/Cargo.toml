@@ -5,7 +5,7 @@ edition.workspace = true
 publish = false
 
 [dependencies]
-zen-frame-graph = { path = "../../crates/zen-frame-graph" }
+zenfg.workspace = true
 zen-render = { path = "../../crates/zen-render", features = ["snapshot"] }
 zen-render-mesh = { path = "../../crates/zen-render-mesh" }
 wgpu.workspace = true

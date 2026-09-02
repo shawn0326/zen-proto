@@ -56,11 +56,13 @@ warms up for 120 frames, collects 600 GPU timestamp samples, writes JSON, and ex
 are enabled for RenderDoc/Nsight/RGP captures. `--geometry-bound` is an explicit assertion used by
 the TaskMesh promotion gate. Benchmark startup fails clearly unless Vulkan timestamp queries are
 available. Schema v6 pairs every timestamp sample with the same frame's delayed GPU counters and
-rejects the run if any sticky capacity-overflow flag is observed. Reports retain the whole-frame
-GPU median/p95 and a per-pass median/p95 block for clear, classify, scan, candidate scatter,
-culling, occluder, Hi-Z, indirect preparation, backend raster, and optional stats-copy work. A pass
-which is absent from the selected path is serialized as `null`. Schema v5 reports and Auto profiles
-are rejected by the existing strict version check and must be regenerated.
+rejects the run if any sticky capacity-overflow flag is observed. Reports retain whole-frame CPU
+and GPU median/p95 values plus per-pass medians and p95s for structured render and compute work.
+ZenFG `0.1.0-beta.2` does not split CPU encode from queue submission and does not timestamp clear or
+copy nodes, so `cpu_encode_ns`, `cpu_submit_ns`, `clear_frame_counters`,
+`clear_coarse_results`, and `stats_copy` are serialized as `null`. The GPU frame interval spans the
+first through last timed render/compute node. Schema v5 reports and Auto profiles are rejected by
+the existing strict version check and must be regenerated.
 
 ```text
 cargo run --release -p zen-demo --bin meshlet-gltf -- scene.gltf --renderer legacy --benchmark-out legacy.json

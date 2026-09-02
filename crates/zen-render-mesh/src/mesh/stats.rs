@@ -1,6 +1,6 @@
 use crate::mesh::frame::MeshGraphResources;
 use std::sync::{Arc, Mutex};
-use zen_frame_graph::{Buffer, Frame, FrameGraphError};
+use zenfg::{Buffer, Frame, FrameGraphError};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MeshRenderStats {

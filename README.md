@@ -4,7 +4,7 @@ Prototype GPU-driven renderer in Rust using wgpu.
 
 ## Workspace
 
-- `crates/zen-frame-graph`: renderer-agnostic, wgpu-specific compiler and GPU runtime with transient resource pooling.
+- [`zenfg`](https://crates.io/crates/zenfg): external renderer-agnostic, wgpu-specific FrameGraph compiler and GPU runtime.
 - `crates/zen-render`: domain-independent `RenderHost` execution infrastructure and typed
   `FrameComposer` contract.
 - `crates/zen-render-mesh`: GPU-driven Mesh domain renderer, persistent GPU scene, and FrameGraph

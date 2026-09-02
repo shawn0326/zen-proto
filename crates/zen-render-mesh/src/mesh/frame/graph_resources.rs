@@ -1,5 +1,5 @@
 use crate::mesh::visibility::{HiZPyramidDesc, VisibilityHistory, VisibilityList};
-use zen_frame_graph::{
+use zenfg::{
     Buffer, BufferDesc, Frame, FrameGraphError, ImportBufferOptions, InitialContents, Texture,
     TextureView, UsagePolicy,
 };

@@ -5,7 +5,7 @@ use crate::mesh::{
     stats::MeshStatsReadback,
     visibility::{HiZPyramidDesc, HiZStage, MeshVisibilityState},
 };
-use zen_frame_graph::{BufferRange, ClearBufferOp, Frame, FrameGraphError, RootReason};
+use zenfg::{BufferRange, ClearBufferOp, Frame, FrameGraphError, RootReason};
 
 /// Single-use ticket returned by [`crate::MeshRenderer::prepare_frame`].
 ///
@@ -232,7 +232,7 @@ mod tests {
         stats::MeshStatsReadback,
         visibility::{HiZStage, MeshVisibilityState},
     };
-    use zen_frame_graph::{
+    use zenfg::{
         AccessRole, CompileOptions, DependencyKind, FullCompilationReport, HazardKind, NodeKind,
         ReportLevel, ResourceOrigin, ResourceUsage, TextureDesc, UsagePolicy,
     };
@@ -310,7 +310,7 @@ mod tests {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
-        let mut graph = zen_frame_graph::FrameGraph::with_device(&device);
+        let mut graph = zenfg::FrameGraph::with_device(&device);
         let mut frame = graph.begin_frame();
         let targets = frame
             .with_debug_group("Frame Targets", |frame| {

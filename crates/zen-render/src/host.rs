@@ -1,14 +1,14 @@
 use crate::{FrameComposeContext, FrameComposer, PresentTarget, RenderFrameInput};
 #[cfg(feature = "snapshot")]
-use zen_frame_graph::snapshot::{
+use zenfg::snapshot::{
     CreateFrameGraphSnapshotOptions, FrameGraphSnapshotV1, SnapshotExportError,
     create_frame_graph_snapshot,
 };
 #[cfg(feature = "snapshot")]
-use zen_frame_graph::{CompilationReport, ResourcePoolStats};
-use zen_frame_graph::{
-    CompileOptions, ExecutionCpuTimings, ExecutionOptions, Frame, FrameGraph, FrameGraphError,
-    GpuTimingReadback, GpuTimingReport, TextureDesc, UsagePolicy,
+use zenfg::{CompilationReport, ResourcePoolStats};
+use zenfg::{
+    CompileOptions, ExecutionOptions, Frame, FrameGraph, FrameGraphError, GpuTimingReadback,
+    GpuTimingReport, TextureDesc, UsagePolicy,
 };
 
 /// Domain-independent owner of FrameGraph recording, compilation, execution,
@@ -19,7 +19,6 @@ pub struct RenderHost<C> {
     last_surface_extent: Option<(u32, u32)>,
     gpu_debug_groups_enabled: bool,
     gpu_timing: GpuTimingRequestState,
-    cpu_timings: Option<ExecutionCpuTimings>,
     #[cfg(feature = "snapshot")]
     snapshot: FrameGraphSnapshotRequestState,
 }
@@ -123,7 +122,6 @@ impl<C: FrameComposer> RenderHost<C> {
             last_surface_extent: None,
             gpu_debug_groups_enabled: false,
             gpu_timing: GpuTimingRequestState::default(),
-            cpu_timings: None,
             #[cfg(feature = "snapshot")]
             snapshot: FrameGraphSnapshotRequestState::default(),
         }
@@ -159,11 +157,6 @@ impl<C: FrameComposer> RenderHost<C> {
         self.gpu_timing.take()
     }
 
-    /// Takes the CPU command-encoding and queue-submit timing for the last successful frame.
-    pub fn take_cpu_timings(&mut self) -> Option<ExecutionCpuTimings> {
-        self.cpu_timings.take()
-    }
-
     /// Requests a Snapshot 1.0 object from the next eligible successful frame.
     /// Repeated requests coalesce while a request or capture is pending.
     #[cfg(feature = "snapshot")]
@@ -185,7 +178,6 @@ impl<C: FrameComposer> RenderHost<C> {
         queue: &wgpu::Queue,
         input: RenderFrameInput<'a, C::FrameInput<'a>>,
     ) -> Result<(), FrameGraphError> {
-        self.cpu_timings = None;
         let surface_extent =
             validate_present_texture(input.surface_texture, self.composer.present_format())?;
         let extent = (surface_extent.width, surface_extent.height);
@@ -205,10 +197,9 @@ impl<C: FrameComposer> RenderHost<C> {
         );
 
         match result {
-            Ok(cpu_timings) => {
+            Ok(()) => {
                 self.composer.after_submit(device, prepared);
                 self.last_surface_extent = Some(extent);
-                self.cpu_timings = Some(cpu_timings);
                 Ok(())
             }
             Err(error) => {
@@ -225,7 +216,7 @@ impl<C: FrameComposer> RenderHost<C> {
         surface_texture: &wgpu::Texture,
         extent: wgpu::Extent3d,
         prepared: &C::PreparedFrame,
-    ) -> Result<ExecutionCpuTimings, FrameGraphError> {
+    ) -> Result<(), FrameGraphError> {
         let mut frame = self.frame_graph.begin_frame();
         let present_target = frame.with_debug_group("Frame Targets", |frame| {
             register_present_target(frame, surface_texture)
@@ -240,7 +231,7 @@ impl<C: FrameComposer> RenderHost<C> {
             .with_frame_index(frame_index);
 
         #[cfg(feature = "snapshot")]
-        let cpu_timings = {
+        {
             let should_snapshot = self
                 .snapshot
                 .should_execute(self.gpu_timing.readback.is_some());
@@ -254,36 +245,30 @@ impl<C: FrameComposer> RenderHost<C> {
                 let report = compiled
                     .take_report()
                     .expect("full report requested for snapshot capture");
-                let (readback, cpu_timings) =
-                    compiled.execute_with_gpu_timing_profiled(queue, execution_options)?;
+                let readback = compiled.execute_with_gpu_timing(queue, execution_options)?;
                 let pool_stats = self.frame_graph.resource_pool_stats();
                 self.snapshot
                     .commit(frame_index, report, pool_stats, readback);
-                cpu_timings
             } else if self.gpu_timing.should_execute() {
-                let (readback, cpu_timings) =
-                    compiled.execute_with_gpu_timing_profiled(queue, execution_options)?;
+                let readback = compiled.execute_with_gpu_timing(queue, execution_options)?;
                 self.gpu_timing.commit(readback);
-                cpu_timings
             } else {
-                compiled.execute_profiled(queue, execution_options)?
+                compiled.execute_with_options(queue, execution_options)?;
             }
-        };
+        }
 
         #[cfg(not(feature = "snapshot"))]
-        let cpu_timings = {
+        {
             let compiled = frame.compile(CompileOptions::default())?;
             if self.gpu_timing.should_execute() {
-                let (readback, cpu_timings) =
-                    compiled.execute_with_gpu_timing_profiled(queue, execution_options)?;
+                let readback = compiled.execute_with_gpu_timing(queue, execution_options)?;
                 self.gpu_timing.commit(readback);
-                cpu_timings
             } else {
-                compiled.execute_profiled(queue, execution_options)?
+                compiled.execute_with_options(queue, execution_options)?;
             }
-        };
+        }
 
-        Ok(cpu_timings)
+        Ok(())
     }
 }
 
@@ -339,7 +324,7 @@ fn should_clear_resource_pool(previous: Option<(u32, u32)>, current: (u32, u32))
 mod tests {
     use super::*;
     use crate::FrameComposer;
-    use zen_frame_graph::{ColorAttachmentOps, CompileOptions, ResourceOrigin, RootReason};
+    use zenfg::{ColorAttachmentOps, CompileOptions, ResourceOrigin, RootReason};
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     enum FailAt {
@@ -406,18 +391,25 @@ mod tests {
 
             let target = context.present_target().texture;
             let fail_at = self.fail_at;
-            let mut pass = context.frame_mut().render_pass("fake-present");
-            let _ =
-                pass.color_attachment(target, ColorAttachmentOps::clear_store(wgpu::Color::BLACK))?;
-            pass.finish_render(move |_| {
-                if fail_at == FailAt::Execute {
-                    Err(FrameGraphError::Internal {
-                        message: "injected execute failure".into(),
-                    })
-                } else {
+            context
+                .frame_mut()
+                .with_debug_group("Fake Present", |frame| {
+                    let mut pass = frame.render_pass("fake-present");
+                    let _ = pass.color_attachment(
+                        target,
+                        ColorAttachmentOps::clear_store(wgpu::Color::BLACK),
+                    )?;
+                    pass.finish_render(move |_| {
+                        if fail_at == FailAt::Execute {
+                            Err(FrameGraphError::Internal {
+                                message: "injected execute failure".into(),
+                            })
+                        } else {
+                            Ok(())
+                        }
+                    })?;
                     Ok(())
-                }
-            })?;
+                })?;
             Ok(())
         }
 
@@ -468,14 +460,26 @@ mod tests {
         host.render_frame(&device, &queue, RenderFrameInput::new(7, &surface, 41))
             .unwrap();
 
-        assert!(host.take_cpu_timings().is_some());
-        assert!(host.take_cpu_timings().is_none());
-
         let composer = host.composer();
         assert_eq!(composer.prepare_count, 1);
         assert_eq!(composer.submit_count, 1);
         assert_eq!(composer.discard_count, 0);
         assert_eq!(composer.terminal_values, [41]);
+    }
+
+    #[test]
+    fn gpu_debug_groups_execute_after_resource_only_leading_group() {
+        let (device, queue) = device_and_queue();
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let surface = texture(&device, format, 8, 8);
+        let mut host = RenderHost::new(&device, FakeComposer::new(format, FailAt::Never));
+        host.set_gpu_debug_groups_enabled(true);
+
+        host.render_frame(&device, &queue, RenderFrameInput::new(7, &surface, 41))
+            .unwrap();
+
+        assert_eq!(host.composer().submit_count, 1);
+        assert_eq!(host.composer().discard_count, 0);
     }
 
     #[test]
@@ -594,7 +598,7 @@ mod tests {
     #[cfg(feature = "snapshot")]
     #[test]
     fn snapshot_requests_coalesce_take_priority_and_move_the_full_report() {
-        use zen_frame_graph::snapshot::{SnapshotGpuTimings, SnapshotPoolReport};
+        use zenfg::snapshot::{SnapshotGpuTimings, SnapshotPoolReport};
 
         let (device, queue) = device_and_queue();
         let mut snapshot = FrameGraphSnapshotRequestState::default();
@@ -639,7 +643,7 @@ mod tests {
     #[cfg(feature = "snapshot")]
     #[test]
     fn host_snapshot_covers_composer_graph_and_present_surface() {
-        use zen_frame_graph::snapshot::SnapshotResourceOrigin;
+        use zenfg::snapshot::SnapshotResourceOrigin;
 
         let (device, queue) = device_and_queue();
         let format = wgpu::TextureFormat::Bgra8UnormSrgb;

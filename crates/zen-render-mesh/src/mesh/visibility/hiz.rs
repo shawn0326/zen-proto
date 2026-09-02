@@ -1,4 +1,4 @@
-use zen_frame_graph::{TextureDesc, TextureViewDesc, UsagePolicy};
+use zenfg::{TextureDesc, TextureViewDesc, UsagePolicy};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct HiZPyramidDesc {

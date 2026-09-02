@@ -30,8 +30,6 @@ fn main() {
         Path::new("../../Cargo.lock"),
         Path::new("../../crates/zen-render-mesh/src/meshlet"),
         Path::new("../../crates/zen-render-mesh/shaders/meshlet"),
-        Path::new("../../crates/zen-frame-graph/src/gpu_timing.rs"),
-        Path::new("../../crates/zen-frame-graph/src/execution.rs"),
         Path::new("../../crates/zen-render/src/host.rs"),
         Path::new("src/device.rs"),
         Path::new("src/meshlet_benchmark.rs"),

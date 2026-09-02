@@ -198,14 +198,6 @@ impl DemoRenderHost {
         }
     }
 
-    fn take_cpu_timings(&mut self) -> Option<(Duration, Duration)> {
-        let timings = match self {
-            Self::Legacy(host) => host.take_cpu_timings(),
-            Self::Meshlet(host) => host.take_cpu_timings(),
-        }?;
-        Some((timings.encode, timings.submit))
-    }
-
     fn snapshot_source(&mut self) -> &mut dyn FrameGraphSnapshotSource {
         match self {
             Self::Legacy(host) => host.as_mut(),
@@ -217,8 +209,6 @@ impl DemoRenderHost {
 struct PendingBenchmarkSample {
     frame_index: u64,
     cpu_frame_ns: u64,
-    cpu_encode_ns: u64,
-    cpu_submit_ns: u64,
 }
 
 struct ActiveBenchmark {
@@ -686,24 +676,13 @@ impl Demo {
             self.render_mode,
         );
         let cpu_frame_ns = duration_ns(cpu_frame_start.elapsed());
-        let (cpu_encode, cpu_submit) = self
-            .render_host
-            .take_cpu_timings()
-            .unwrap_or_else(|| fatal("successful benchmark frame did not expose CPU timings"));
-        let cpu_encode_ns = duration_ns(cpu_encode);
-        let cpu_submit_ns = duration_ns(cpu_submit);
 
         if warming_up {
             self.benchmark
                 .as_mut()
                 .unwrap()
                 .collector_mut()
-                .record_frame(MeshletFrameSampleNs::split(
-                    cpu_frame_ns,
-                    cpu_encode_ns,
-                    cpu_submit_ns,
-                    0,
-                ));
+                .record_frame(MeshletFrameSampleNs::combined(cpu_frame_ns, 0));
             if self
                 .benchmark
                 .as_ref()
@@ -719,8 +698,6 @@ impl Demo {
             benchmark.pending = Some(PendingBenchmarkSample {
                 frame_index: self.frame_index,
                 cpu_frame_ns,
-                cpu_encode_ns,
-                cpu_submit_ns,
             });
             if self.render_host.uses_meshlet_renderer() {
                 assert!(benchmark.expected_stats.insert(self.frame_index));
@@ -765,13 +742,8 @@ impl Demo {
             ));
         }
         benchmark.collector_mut().record_frame(
-            MeshletFrameSampleNs::split(
-                pending.cpu_frame_ns,
-                pending.cpu_encode_ns,
-                pending.cpu_submit_ns,
-                gpu_frame_ns,
-            )
-            .with_gpu_passes(decoded.passes),
+            MeshletFrameSampleNs::combined(pending.cpu_frame_ns, gpu_frame_ns)
+                .with_gpu_passes(decoded.passes),
         );
         let samples = benchmark.collector().sample_frames_recorded();
         if samples.is_multiple_of(60) || samples == MESHLET_BENCHMARK_MIN_SAMPLE_FRAMES as usize {

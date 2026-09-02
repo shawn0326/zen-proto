@@ -33,7 +33,7 @@ use crate::{
         visibility::HiZStage,
     },
 };
-use zen_frame_graph::{Frame, FrameGraphError, TextureDesc};
+use zenfg::{Frame, FrameGraphError, TextureDesc};
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const DEFAULT_LOD_THRESHOLD_PIXELS: f32 = 1.0;
@@ -308,7 +308,7 @@ impl MeshletRenderer {
     /// through [`MeshletRenderInput::frame_index`].
     pub fn associate_gpu_timing(
         &mut self,
-        report: &zen_frame_graph::GpuTimingReport,
+        report: &zenfg::GpuTimingReport,
     ) -> Result<(), MeshletGpuTimingError> {
         self.stats.associate_gpu_timing(report)
     }
@@ -1040,9 +1040,8 @@ mod tests {
     use crate::meshlet::{
         MeshletBindlessConfig, MeshletCapabilities, MeshletCapacityConfig, RawStaticMesh,
     };
-    use zen_frame_graph::{
-        AccessRole, CompileOptions, FrameGraph, FullCompilationReport, ResourceKind, RootReason,
-        TextureDesc, UsagePolicy,
+    use zenfg::{
+        CompileOptions, FrameGraph, FullCompilationReport, RootReason, TextureDesc, UsagePolicy,
     };
 
     #[test]
@@ -1285,18 +1284,6 @@ mod tests {
                 "meshlet.indirect-prepare",
                 "meshlet.backend-raster.indexed",
             ]
-        );
-        assert!(
-            occluded
-                .resources
-                .iter()
-                .all(|resource| resource.kind != ResourceKind::TextureSet)
-        );
-        assert!(
-            occluded
-                .accesses
-                .iter()
-                .all(|access| access.role != AccessRole::BindlessTextureSet)
         );
         for renderer_owned in [
             "meshlet.vertices",

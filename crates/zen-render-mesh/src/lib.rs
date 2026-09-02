@@ -1,4 +1,4 @@
-//! GPU-driven Mesh domain rendering for `zen-frame-graph`.
+//! GPU-driven Mesh domain rendering for `zenfg`.
 //!
 //! [`MeshRenderer`] owns Mesh GPU resources and contributes Mesh-specific work to a caller-owned
 //! FrameGraph. Surface acquisition, target allocation, graph compilation, execution, and

@@ -1,4 +1,4 @@
-use zen_frame_graph::{Frame, FrameGraphError, Texture};
+use zenfg::{Frame, FrameGraphError, Texture};
 
 /// Domain-specific composition contract used by [`crate::RenderHost`].
 ///

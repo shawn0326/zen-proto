@@ -1,6 +1,6 @@
 use super::HiZPyramidDesc;
 use crate::mesh::frame::{MeshGraphResources, MeshRenderTargets};
-use zen_frame_graph::{Frame, FrameGraphError, WriteContents};
+use zenfg::{Frame, FrameGraphError, WriteContents};
 
 pub struct HiZStage {
     depth_to_mip0_pipeline: wgpu::ComputePipeline,
@@ -284,7 +284,7 @@ impl HiZStage {
 mod tests {
     use super::*;
     use std::cell::Cell;
-    use zen_frame_graph::{
+    use zenfg::{
         CompileOptions, DepthAttachmentOps, FrameGraph, RootReason, TextureDesc, UsagePolicy,
         WriteContents,
     };

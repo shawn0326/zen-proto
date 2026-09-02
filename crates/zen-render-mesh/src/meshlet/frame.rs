@@ -1,6 +1,6 @@
 use super::{config::MeshletBackend, gpu_scene::MeshletGpuScene};
 use crate::mesh::visibility::HiZPyramidDesc;
-use zen_frame_graph::{
+use zenfg::{
     Buffer, BufferDesc, Frame, FrameGraphError, ImportBufferOptions, InitialContents, Texture,
     TextureView, UsagePolicy,
 };
